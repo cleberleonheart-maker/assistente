@@ -40,10 +40,17 @@ global.localStorage = {
   setItem: (k, v) => { store[k] = String(v); },
   removeItem: k => { delete store[k]; },
 };
+const docEl = {
+  _at: {},
+  setAttribute(k, v){ this._at[k] = String(v); },
+  getAttribute(k){ return (k in this._at) ? this._at[k] : null; },
+  removeAttribute(k){ delete this._at[k]; },
+};
 global.document = {
   querySelector: getEl, querySelectorAll: () => [],
   createElement: () => el("created"), createTextNode: () => ({}),
   body: el("body"), addEventListener(){}, activeElement: null,
+  documentElement: docEl,
 };
 global.window = global;
 global.navigator = { clipboard: { writeText: async () => {} }, userAgent: "node" };
@@ -429,6 +436,85 @@ function prepararConv(nPares, model) {
       assert(!ih.includes("<img src=x"), "HTML cru injetado: " + ih);
     });
     t.state.img = [];
+  }
+
+  // 21) paraApi converte anexos para o formato da API
+  {
+    await run("paraApi -> texto do anexo no conteúdo e imagem como image_url", async () => {
+      const api = t.paraApi([{ role: "user", content: "veja", attachments: [
+        { nome: "nota.txt", tipo: "texto", conteudo: "linha secreta" },
+        { nome: "foto.jpg", tipo: "imagem", conteudo: "data:image/jpeg;base64,AAA" }
+      ]}]);
+      assert(Array.isArray(api[0].content), "deveria ser multimodal");
+      assert(api[0].content[0].type === "text" && /linha secreta/.test(api[0].content[0].text), "texto do anexo ausente");
+      assert(api[0].content[1].type === "image_url" && /^data:image\//.test(api[0].content[1].image_url.url), "imagem não convertida");
+    });
+  }
+
+  // 22) exportação em Markdown
+  {
+    await run("conversaMd -> título, papéis e anexo", async () => {
+      const md = t.conversaMd({ title: "Teste", t: 0, msgs: [
+        { role: "user", content: "oi", attachments: [{ nome: "a.txt", tipo: "texto", conteudo: "CONTEUDO" }] },
+        { role: "assistant", content: "olá" }
+      ]});
+      assert(/^# Teste/m.test(md), "sem título");
+      assert(/## você/.test(md) && /## assistente/.test(md), "sem papéis");
+      assert(/CONTEUDO/.test(md), "anexo ausente no markdown");
+    });
+  }
+
+  // 23) envio com anexo de texto
+  {
+    const c = prepararConv(0);
+    getEl("#chatInput").value = "resuma";
+    t.state.anexos = [{ nome: "n.txt", tipo: "texto", conteudo: "segredo123", tamanho: 10 }];
+    let enviado = null;
+    fetchImpl = async (url, opts) => {
+      if (!url.endsWith("/chat/completions")) return fail(404, "x");
+      enviado = JSON.parse(opts.body);
+      return okStream("ok");
+    };
+    await run("send -> conteúdo do anexo vai junto e a mensagem guarda o anexo", async () => {
+      await t.send();
+      assert(enviado, "não enviou");
+      const m = enviado.messages[enviado.messages.length - 1];
+      assert(/segredo123/.test(m.content), "conteúdo do anexo não foi enviado");
+      const u = c.msgs.find(x => x.role === "user");
+      assert(u.attachments && u.attachments[0].nome === "n.txt", "anexo não foi guardado");
+      assert(t.state.anexos.length === 0, "anexos pendentes não limparam");
+    });
+  }
+
+  // 24) fallback entre provedores
+  {
+    const c = prepararConv(0);
+    t.state.fb = { prov: "openrouter", base: "https://fb.example/v1", key: "k2", model: "m2" };
+    getEl("#chatInput").value = "oi";
+    const urls = [];
+    fetchImpl = async (url) => {
+      urls.push(url);
+      if (url.startsWith("https://fb.example")) return okStream("veio do reserva");
+      return fail(500, "caiu");
+    };
+    await run("fallback -> usa o provedor reserva quando o principal dá 500", async () => {
+      await t.send();
+      assert(urls.some(u => u.startsWith("https://fb.example")), "não chamou o reserva: " + urls.join(", "));
+      const msgs = c.msgs;
+      assert(msgs[msgs.length - 1].content === "veio do reserva", "resposta do reserva não chegou");
+    });
+    t.state.fb = { prov: "", base: "", key: "", model: "" };
+  }
+
+  // 25) tema claro/escuro
+  {
+    await run("aplicaTema -> alterna data-theme e persiste", async () => {
+      t.aplicaTema("light");
+      assert(global.document.documentElement.getAttribute("data-theme") === "light", "não aplicou claro");
+      assert(localStorage.getItem("st_theme") === "light", "não persistiu");
+      t.aplicaTema("dark");
+      assert(global.document.documentElement.getAttribute("data-theme") === null, "não voltou escuro");
+    });
   }
 
   console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\nTODOS OS TESTES PASSARAM");

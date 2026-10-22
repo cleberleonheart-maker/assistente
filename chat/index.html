@@ -15,6 +15,11 @@
   :root{
     --bg:#0f1115; --bg2:#161a21; --bg3:#1e242e; --fg:#e6e9ef; --mut:#9aa4b2;
     --acc:#6ea8fe; --acc2:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; --borda:#2a323d;
+    --code:#0b0d11; --codefg:#e6e9ef;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --bg2:#ffffff; --bg3:#eef1f5; --fg:#1a1f27; --mut:#5b6673;
+    --acc:#2f6fed; --acc2:#1f5fe0; --ok:#128a5b; --err:#c62828; --borda:#d6dce4;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
@@ -39,15 +44,27 @@
   .msg:hover .mtools{opacity:1}
   .mtools button{padding:2px 8px;font-size:11px}
   @media(hover:none){.mtools{opacity:.7}}
-  .body pre{background:#0b0d11;border:1px solid var(--borda);border-radius:8px;padding:10px;overflow:auto;position:relative}
+  .body pre{background:var(--code);color:var(--codefg);border:1px solid var(--borda);border-radius:8px;padding:10px;overflow:auto;position:relative}
   .body code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
-  .body :not(pre)>code{background:#0b0d11;border:1px solid var(--borda);border-radius:4px;padding:1px 5px}
+  .body :not(pre)>code{background:var(--code);color:var(--codefg);border:1px solid var(--borda);border-radius:4px;padding:1px 5px}
   .body p{margin:.4em 0}
   .body ul,.body ol{margin:.3em 0;padding-left:1.4em}
   .copy{position:absolute;top:6px;right:6px;font-size:11px;background:var(--bg3);color:var(--mut);border:1px solid var(--borda);border-radius:6px;padding:2px 8px;cursor:pointer}
   .copy:hover{color:var(--fg)}
   .composer{border-top:1px solid var(--borda);background:var(--bg2)}
-  .composer .row{max-width:900px;margin:0 auto;padding:10px 16px;display:flex;gap:8px;align-items:flex-end}
+  .composer .row{max-width:900px;margin:0 auto;padding:10px 16px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+  .composer .row textarea{flex:1;min-width:180px}
+  .composer .anexos{display:flex;flex-wrap:wrap;gap:8px;max-width:900px;margin:0 auto;padding:10px 16px 0}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--borda);border-radius:8px;padding:4px 8px;font-size:12px;max-width:280px;overflow:hidden}
+  .chip img{height:28px;width:28px;object-fit:cover;border-radius:4px}
+  .chip .rmx{background:transparent;color:var(--mut);border:0;padding:0 2px;cursor:pointer;font-size:15px;line-height:1}
+  .chip .rmx:hover{color:var(--fg)}
+  .anexos{display:flex;flex-wrap:wrap;gap:8px;margin:.5em 0}
+  .anexo-img{max-width:220px;max-height:220px;border-radius:8px;border:1px solid var(--borda);display:block;background:#000}
+  .anexo-txt{font-size:12px;max-width:100%}
+  .anexo-txt pre{max-height:220px;overflow:auto;background:var(--code);color:var(--codefg);border:1px solid var(--borda);border-radius:8px;padding:8px}
+  .anexo-txt summary{cursor:pointer;color:var(--mut)}
+  button.on{background:var(--ok);color:#04231a}
   textarea,input,select{background:var(--bg3);color:var(--fg);border:1px solid var(--borda);border-radius:8px;padding:9px 11px;font:inherit;outline:none;width:100%}
   textarea{resize:vertical;min-height:46px;max-height:200px}
   textarea:focus,input:focus,select:focus{border-color:var(--acc2)}
@@ -84,6 +101,7 @@
   details.reason>div{padding:8px 10px;font-size:13px;color:var(--mut)}
   details.reason>div p{margin:.3em 0}
 </style>
+<script>try{var _t=localStorage.getItem("st_theme");if(_t)document.documentElement.setAttribute("data-theme",_t);}catch(e){}</script>
 </head>
 <body>
 <header>
@@ -94,6 +112,7 @@
     <div class="tab" data-v="vid">Vídeo</div>
     <div class="tab" data-v="cfg">Config</div>
   </div>
+  <button id="themeBtn" class="sec" title="Alternar tema claro/escuro" style="padding:6px 10px">tema</button>
   <div class="status" id="status"></div>
 </header>
 
@@ -109,14 +128,18 @@
     </div>
     <div class="scroll" id="chatScroll"><div class="wrap" id="chat"></div></div>
     <div class="composer">
+      <div class="anexos" id="anexosPrev" style="display:none"></div>
       <div class="row">
-        <textarea id="chatInput" placeholder="Pergunte algo ou cole código... (Enter envia, Shift+Enter quebra linha)"></textarea>
+        <textarea id="chatInput" placeholder="Pergunte algo ou cole código... (Enter envia, Shift+Enter quebra linha; pode colar imagem)"></textarea>
+        <button id="attachBtn" class="sec" title="Anexar imagem ou arquivo de texto">anexar</button>
+        <button id="micBtn" class="sec" title="Ditar por voz">ditar</button>
         <button id="sendBtn">Enviar</button>
         <button id="stopBtn" class="sec" style="display:none">Parar</button>
         <button id="regenBtn" class="sec" title="Regenerar última resposta" style="display:none">↻</button>
         <button id="editBtn" class="sec" title="Editar última mensagem" style="display:none">✎</button>
         <button id="semHistBtn" class="sec" title="Enviar só a última mensagem, sem o histórico (útil contra o erro 413)" style="display:none">s/ hist.</button>
         <button id="clearBtn" class="sec" title="Nova conversa">+</button>
+        <input type="file" id="chatFile" multiple accept="image/*,.txt,.md,.markdown,.json,.csv,.tsv,.log,.js,.mjs,.ts,.jsx,.tsx,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.cs,.php,.html,.htm,.css,.scss,.xml,.yml,.yaml,.toml,.ini,.cfg,.sh,.bash,.sql,.env" style="display:none">
       </div>
     </div>
   </section>
@@ -200,6 +223,34 @@
         <div class="hint">Clique em "Carregar modelos" após inserir a chave. Os nomes variam por provedor (ex.: Groq: openai/gpt-oss-120b; OpenAI: gpt-4o-mini; DeepSeek: deepseek-chat).</div>
       </div>
       <div class="field">
+        <label>Provedor reserva (fallback)</label>
+        <select id="cfgFbProv">
+          <option value="">(desativado)</option>
+          <option value="groq">Groq (grátis)</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="openai">OpenAI</option>
+          <option value="deepseek">DeepSeek</option>
+          <option value="together">Together AI</option>
+          <option value="custom">Custom (endpoint OpenAI-compatível)</option>
+        </select>
+        <div class="hint">Usado automaticamente quando o provedor principal falhar (rede, timeout, limite 429 ou erro 5xx).</div>
+      </div>
+      <div class="field">
+        <label>Base URL do reserva</label>
+        <input id="cfgFbBase" placeholder="https://api.openrouter.ai/api/v1">
+      </div>
+      <div class="field">
+        <label>Chave do reserva</label>
+        <input id="cfgFbKey" type="password" placeholder="chave do provedor reserva">
+      </div>
+      <div class="field">
+        <label>Modelo do reserva</label>
+        <div class="rowflex">
+          <select id="cfgFbModel" style="flex:1;min-width:220px"></select>
+          <button id="cfgFbLoad" class="sec">Carregar modelos</button>
+        </div>
+      </div>
+      <div class="field">
         <label>Instruções do sistema (personalidade)</label>
         <textarea id="cfgSys"></textarea>
       </div>
@@ -212,9 +263,11 @@
         <div class="rowflex">
           <button id="cfgExport" class="sec">Exportar (JSON)</button>
           <button id="cfgImport" class="sec">Importar (JSON)</button>
+          <button id="cfgMd" class="sec">Conversa atual (Markdown)</button>
+          <button id="cfgCopy" class="sec">Copiar conversa</button>
           <input type="file" id="cfgImportFile" accept=".json,application/json" style="display:none">
         </div>
-        <div class="hint">Exporta todas as conversas com mensagens. Importar mescla com as atuais (títulos repetidos são mantidos como conversas separadas).</div>
+        <div class="hint">Exporta todas as conversas com mensagens. Importar mescla com as atuais (títulos repetidos são mantidos como conversas separadas). "Conversa atual" baixa a conversa em Markdown.</div>
       </div>
     </div></div>
   </section>
@@ -230,7 +283,8 @@
     key:"st_api_key", model:"st_chat_model", sys:"st_sys",
     convs:"st_convs", conv:"st_conv_cur",
     img:"st_img_history", pkey:"st_poll_key",
-    base:"st_api_base", prov:"st_api_prov"
+    base:"st_api_base", prov:"st_api_prov",
+    tema:"st_theme", fb:"st_fb"
   };
   const PRESETS = {
     groq:      { base:"https://api.groq.com/openai/v1",       model:"openai/gpt-oss-120b" },
@@ -286,16 +340,235 @@
     convs: carregarConvs(),
     convId: localStorage.getItem(LS.conv)||"",
     img: JSON.parse(localStorage.getItem(LS.img)||"[]"),
+    tema: localStorage.getItem(LS.tema)||"dark",
+    fb: JSON.parse(localStorage.getItem(LS.fb)||"null")||{prov:"",base:"",key:"",model:""},
+    anexos: [],
     abort:null, busy:false, usage:null
   };
   if(!state.convs.some(c=>c.id===state.convId)) state.convId=state.convs[0].id;
   function conv(){ return state.convs.find(c=>c.id===state.convId)||state.convs[0]; }
   function chat(){ return conv().msgs; }
+
+  // --- IndexedDB: guarda histórico e imagens completos; o localStorage fica "magro" ---
+  const IDB=(function(){
+    const tem=typeof indexedDB!=="undefined"&&!!indexedDB;
+    let p=null, db=null;
+    function abrir(){
+      if(!tem)return Promise.reject(new Error("sem indexedDB"));
+      if(db)return Promise.resolve(db);
+      if(p)return p;
+      p=new Promise((res,rej)=>{
+        let r;
+        try{ r=indexedDB.open("assistente",1); }catch(e){ rej(e); return; }
+        r.onupgradeneeded=()=>{ try{ r.result.createObjectStore("kv"); }catch(e){} };
+        r.onsuccess=()=>{ db=r.result; res(db); };
+        r.onerror=()=>rej(r.error||new Error("falha ao abrir indexedDB"));
+        r.onblocked=()=>rej(new Error("indexedDB bloqueado"));
+      });
+      return p;
+    }
+    function tx(modo,fn){
+      return abrir().then(d=>new Promise((res,rej)=>{
+        let t;
+        try{ t=d.transaction("kv",modo); }catch(e){ rej(e); return; }
+        let req;
+        try{ req=fn(t.objectStore("kv")); }catch(e){ rej(e); return; }
+        t.oncomplete=()=>res(req?req.result:undefined);
+        t.onerror=()=>rej(t.error||new Error("erro no indexedDB"));
+        t.onabort=()=>rej(t.error||new Error("indexedDB abortado"));
+      }));
+    }
+    return {
+      tem,
+      get:k=>tx("readonly",s=>s.get(k)),
+      set:(k,v)=>tx("readwrite",s=>s.put(v,k))
+    };
+  })();
+  let idbTimer=null;
+  function convsMagras(){
+    return state.convs.map(c=>({id:c.id,title:c.title,t:c.t,msgs:c.msgs.map(m=>{
+      if(!m.attachments||!m.attachments.length)return m;
+      return Object.assign({},m,{attachments:m.attachments.map(a=>({nome:a.nome,tipo:a.tipo,mime:a.mime,tamanho:a.tamanho}))});
+    })}));
+  }
+  function agendaIDB(){
+    if(!IDB.tem)return;
+    clearTimeout(idbTimer);
+    idbTimer=setTimeout(()=>{
+      IDB.set("convs",state.convs).catch(()=>{});
+      IDB.set("convId",state.convId).catch(()=>{});
+      IDB.set("img",state.img).catch(()=>{});
+    },300);
+  }
+  async function hidratarIDB(){
+    if(!IDB.tem)return;
+    try{
+      const convs=await IDB.get("convs");
+      if(Array.isArray(convs)&&convs.length){
+        state.convs=convs;
+        const cid=await IDB.get("convId");
+        if(cid&&convs.some(c=>c.id===cid))state.convId=cid;
+        else if(!convs.some(c=>c.id===state.convId))state.convId=convs[0].id;
+        const imgs=await IDB.get("img");
+        if(Array.isArray(imgs)&&imgs.length)state.img=imgs.slice(0,40);
+        renderChat(); renderImg(); loadCfg();
+      }else{
+        IDB.set("convs",state.convs).catch(()=>{});
+        IDB.set("convId",state.convId).catch(()=>{});
+        IDB.set("img",state.img).catch(()=>{});
+      }
+    }catch(e){}
+  }
   function save(){
     const c=conv(); c.t=Date.now();
     state.convs.sort((a,b)=>b.t-a.t);
-    localStorage.setItem(LS.convs,JSON.stringify(state.convs));
+    try{ localStorage.setItem(LS.convs,JSON.stringify(IDB.tem?convsMagras():state.convs)); }catch(e){}
     localStorage.setItem(LS.conv,state.convId);
+    agendaIDB();
+  }
+
+  // --- anexos (imagens e arquivos de texto) ---
+  const MAX_ANEXOS=6, MAX_TXT=200*1024;
+  const EXT_TXT=/\.(txt|md|markdown|json|csv|tsv|log|js|mjs|ts|jsx|tsx|py|rb|go|rs|java|c|h|cpp|cs|php|html?|css|scss|xml|ya?ml|toml|ini|cfg|conf|sh|bash|sql|env)$/i;
+  function textoDe(m){
+    if(!m)return "";
+    if(typeof m.content==="string")return m.content;
+    if(Array.isArray(m.content))return m.content.map(p=>typeof p==="string"?p:(p&&p.text)||"").join("\n");
+    return "";
+  }
+  function textoComAnexos(m){
+    let txt=textoDe(m);
+    ((m&&m.attachments)||[]).forEach(a=>{
+      if(a.tipo==="texto"&&a.conteudo)txt+="\n\n--- anexo: "+(a.nome||"arquivo")+" ---\n"+a.conteudo;
+    });
+    return txt;
+  }
+  function paraApi(msgs){
+    return (msgs||[]).map(m=>{
+      const txt=textoComAnexos(m);
+      const imgs=((m&&m.attachments)||[]).filter(a=>a.tipo==="imagem"&&a.conteudo);
+      if(!imgs.length)return {role:m.role,content:txt};
+      const parts=[];
+      if(txt)parts.push({type:"text",text:txt});
+      imgs.forEach(a=>parts.push({type:"image_url",image_url:{url:a.conteudo}}));
+      return {role:m.role,content:parts};
+    });
+  }
+  function fmtTam(n){
+    n=+n||0;
+    return n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(1)+" MB";
+  }
+  function limpaNome(n){ return ((n||"arquivo").replace(/[\\/:*?"<>|]/g,"_")).slice(0,80); }
+  function anexosHtml(m){
+    const arr=(m&&m.attachments)||[];
+    if(!arr.length)return "";
+    return '<div class="anexos">'+arr.map(a=>{
+      if(a.tipo==="imagem"&&a.conteudo)
+        return '<img class="anexo-img" src="'+esc(a.conteudo)+'" alt="'+esc(a.nome||"imagem")+'" loading="lazy">';
+      return '<details class="anexo-txt" style="flex:1 1 100%"><summary>'+esc(a.nome||"arquivo")+' ('+fmtTam(a.tamanho)+')</summary><pre>'+esc(a.conteudo||"")+'</pre></details>';
+    }).join("")+'</div>';
+  }
+  function renderAnexos(){
+    const box=$("#anexosPrev");
+    if(!box)return;
+    const arr=state.anexos||[];
+    box.style.display=arr.length?"flex":"none";
+    box.innerHTML=arr.map((a,i)=>{
+      const rotulo=esc(a.nome)+' ('+fmtTam(a.tamanho)+')';
+      const mid=a.tipo==="imagem"&&a.conteudo?'<img src="'+esc(a.conteudo)+'" alt="">':"";
+      return '<span class="chip">'+mid+'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+rotulo+'</span>'+
+        '<button class="rmx" data-rmax="'+i+'" title="Remover anexo">×</button></span>';
+    }).join("");
+    box.querySelectorAll("[data-rmax]").forEach(b=>b.onclick=()=>{
+      state.anexos.splice(+b.dataset.rmax,1); renderAnexos();
+    });
+  }
+  function lerTexto(file){
+    return new Promise((res,rej)=>{
+      const r=new FileReader();
+      r.onload=()=>res(String(r.result||""));
+      r.onerror=()=>rej(new Error("falha ao ler o arquivo"));
+      r.readAsText(file);
+    });
+  }
+  async function adicionarArquivo(file){
+    if(!file)return;
+    if(state.anexos.length>=MAX_ANEXOS){ toast("Máximo de "+MAX_ANEXOS+" anexos por mensagem",true); return; }
+    const nome=limpaNome(file.name||("colado-"+Date.now()));
+    const tipo=file.type||"";
+    if(tipo.startsWith("image/")){
+      try{
+        const u=await blobToDataUrl(file,1280,0.82);
+        state.anexos.push({nome,tipo:"imagem",mime:tipo,conteudo:u,tamanho:file.size||u.length});
+      }catch(e){ toast("Falha ao ler imagem: "+e.message,true); return; }
+    }else if(tipo.startsWith("text/")||EXT_TXT.test(nome)){
+      if(file.size>MAX_TXT){ toast("Arquivo de texto muito grande (máx. 200 KB)",true); return; }
+      try{
+        const txt=await lerTexto(file);
+        state.anexos.push({nome,tipo:"texto",mime:tipo||"text/plain",conteudo:txt,tamanho:file.size||txt.length});
+      }catch(e){ toast("Falha ao ler arquivo: "+e.message,true); return; }
+    }else{
+      toast("Tipo não suportado — use imagem ou arquivo de texto",true); return;
+    }
+    renderAnexos();
+  }
+  async function adicionarArquivos(files){
+    for(const f of Array.from(files||[])) await adicionarArquivo(f);
+  }
+
+  // --- tema claro/escuro ---
+  function aplicaTema(t){
+    state.tema=t==="light"?"light":"dark";
+    try{
+      if(state.tema==="light")document.documentElement.setAttribute("data-theme","light");
+      else document.documentElement.removeAttribute("data-theme");
+      localStorage.setItem(LS.tema,state.tema);
+    }catch(e){}
+    const b=$("#themeBtn");
+    if(b)b.textContent=state.tema==="light"?"escuro":"claro";
+    const mt=document.querySelector('meta[name="theme-color"]');
+    if(mt&&mt.setAttribute)mt.setAttribute("content",state.tema==="light"?"#f6f7f9":"#0f1115");
+  }
+
+  // --- exportar em Markdown ---
+  function conversaMd(c){
+    c=c||conv();
+    const out=["# "+(c.title||"Conversa"),""];
+    if(c.t)out.push("_"+new Date(c.t).toLocaleString("pt-BR")+"_","");
+    (c.msgs||[]).forEach(m=>{
+      const quem=m.role==="assistant"?"assistente":"você";
+      out.push("## "+quem,"");
+      if(m.reasoning&&m.reasoning.trim())out.push("<details><summary>pensamento</summary>","",m.reasoning,"","</details>","");
+      ((m.attachments)||[]).forEach(a=>{
+        if(a.tipo==="imagem"&&a.conteudo)out.push("![imagem]("+(a.conteudo||"")+")","");
+        else if(a.conteudo)out.push("**anexo: "+a.nome+"**","","```",""+a.conteudo,"```","");
+      });
+      out.push(textoDe(m),"");
+    });
+    return out.join("\n");
+  }
+  function baixarTexto(nome,txt,mime){
+    const b=new Blob([txt],{type:mime||"text/plain;charset=utf-8"});
+    const a=document.createElement("a");
+    const url=URL.createObjectURL(b);
+    a.href=url; a.download=nome;
+    document.body.appendChild(a); a.click();
+    if(a.remove)a.remove(); else document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function nomeArquivo(base){
+    return (base||"conversa").replace(/[\\/:*?"<>|]+/g,"-").replace(/\s+/g," ").trim().slice(0,60)||"conversa";
+  }
+  function exportarMd(){
+    const c=conv();
+    baixarTexto(nomeArquivo(c.title)+"-"+new Date().toISOString().slice(0,10)+".md",conversaMd(c),"text/markdown;charset=utf-8");
+    toast("Markdown baixado");
+  }
+  async function copiarConversa(){
+    try{
+      await navigator.clipboard.writeText(conversaMd(conv()));
+      toast("Conversa copiada em Markdown");
+    }catch(e){ toast("Falha ao copiar: "+e.message,true); }
   }
 
   function toast(m,err){ const t=$("#toast"); t.textContent=m; t.className="toast on"+(err?" err":""); setTimeout(()=>t.className="toast",2600); }
@@ -305,7 +578,11 @@
   function estimaTokens(nMsgs){
     const c=conv();
     const hist=c.msgs.slice(0,nMsgs===undefined?c.msgs.length:nMsgs);
-    const chars=state.sys.length+hist.reduce((a,m)=>a+(m.content||"").length+(m.reasoning||"").length,0);
+    const chars=state.sys.length+hist.reduce((a,m)=>{
+      let n=textoDe(m).length+(m.reasoning||"").length;
+      ((m&&m.attachments)||[]).forEach(x=>{ n+=x.tipo==="texto"?(x.conteudo||"").length:800; });
+      return a+n;
+    },0);
     return Math.ceil(chars/4);
   }
   function marcaContexto(){
@@ -343,13 +620,17 @@
     if(m.reasoning&&m.reasoning.trim()){
       body+='<details class="reason"><summary>pensamento</summary><div>'+md(m.reasoning)+'</div></details>';
     }
-    body+=md(m.content);
+    body+=md(textoDe(m));
+    body+=anexosHtml(m);
     let tools="";
     if(typeof idx==="number"){
       tools='<div class="mtools">';
       tools+='<button class="sec" data-msgcopy="'+idx+'" title="Copiar mensagem">copiar</button>';
       tools+='<button class="sec" data-msgedit="'+idx+'" title="Editar esta mensagem e tudo depois dela">editar</button>';
-      if(m.role==="assistant")tools+='<button class="sec" data-msgregen="'+idx+'" title="Gerar esta resposta de novo">regenerar</button>';
+      if(m.role==="assistant"){
+        tools+='<button class="sec" data-msgregen="'+idx+'" title="Gerar esta resposta de novo">regenerar</button>';
+        tools+='<button class="sec" data-msgfalar="'+idx+'" title="Ler esta resposta em voz alta">ouvir</button>';
+      }
       tools+='</div>';
     }
     return '<div class="msg '+m.role+'"><div class="who">'+(m.role==="user"?"você":"assistente")+'</div>'+
@@ -401,16 +682,26 @@
   }
   function ligarToolsMsg(el){
     el.querySelectorAll("[data-msgcopy]").forEach(b=>b.onclick=()=>{
-      navigator.clipboard.writeText(chat()[+b.dataset.msgcopy].content||""); toast("Mensagem copiada");
+      navigator.clipboard.writeText(textoDe(chat()[+b.dataset.msgcopy])); toast("Mensagem copiada");
     });
     el.querySelectorAll("[data-msgedit]").forEach(b=>b.onclick=()=>editarMensagem(+b.dataset.msgedit));
     el.querySelectorAll("[data-msgregen]").forEach(b=>b.onclick=()=>regenerarDe(+b.dataset.msgregen));
+    el.querySelectorAll("[data-msgfalar]").forEach(b=>b.onclick=()=>{
+      const t=textoDe(chat()[+b.dataset.msgfalar]).trim();
+      if(!t){ toast("Nada para ler",true); return; }
+      falar(t);
+    });
+  }
+  function carregarNaCaixa(m){
+    $("#chatInput").value=textoDe(m);
+    state.anexos=((m&&m.attachments)||[]).map(a=>Object.assign({},a));
+    renderAnexos();
   }
   function editarMensagem(idx){
     if(state.busy){ toast("Aguarde a geração terminar",true); return; }
     const msgs=chat();
     if(idx<0||idx>=msgs.length)return;
-    $("#chatInput").value=msgs[idx].content;
+    carregarNaCaixa(msgs[idx]);
     msgs.length=idx;
     renderChat(); save();
     $("#chatInput").focus();
@@ -424,10 +715,10 @@
     while(ui>=0&&msgs[ui].role!=="user")ui--;
     if(ui<0)return;
     msgs.length=ui+1;
-    const text=msgs[ui].content;
+    const user=msgs[ui];
     msgs.pop();
     renderChat(); save();
-    $("#chatInput").value=text;
+    carregarNaCaixa(user);
     send();
   }
   // durante o stream, só re-renderiza a última mensagem (marcado+hljs pesam)
@@ -496,7 +787,8 @@
       onStatus=()=>{},onModeloTrocado=()=>{},recarregarModelos=null,
       hist=null,permite413=true,tentativa=0
     }=opts;
-    const lista=messages||[{role:"system",content:opts.system},...semHistorico(hist&&hist.length,hist)];
+    const listaBase=messages||[{role:"system",content:opts.system},...semHistorico(hist&&hist.length,hist)];
+    const lista=typeof opts.transformar==="function"?opts.transformar(listaBase):listaBase;
     const body={model,messages:lista,stream};
     if(!opts.semTemp)body.temperature=0.6;
     if(extra)Object.assign(body,extra);
@@ -524,8 +816,8 @@
         const novo=req>0?Math.max(2,Math.floor(base_n*(limit/req)*0.85)):Math.max(2,Math.floor(base_n/2));
         if(novo<base_n){
           onStatus("pedido grande demais — encurtando histórico para "+novo+" mensagens e reenviando...");
-          const mensagens=hist?[{role:"system",content:opts.system},...semHistorico(novo,hist)]:lista.slice(-novo);
-          return chamarChat(Object.assign({},opts,{messages:mensagens,hist:null,permite413:mensagens.length>2}));
+          const mensagens=hist?[{role:"system",content:opts.system},...semHistorico(novo,hist)]:listaBase.slice(-novo);
+          return chamarChat(Object.assign({},opts,{messages:mensagens,hist:null,transformar:null,permite413:mensagens.length>2}));
         }
       }
       throw new Error("HTTP 413 — o pedido passa do limite de tokens por minuto do plano"+(limit?" (limite "+limit+", pedido "+req+")":"")+". Comece uma nova conversa, apague mensagens antigas ou envie menos texto.");
@@ -545,21 +837,62 @@
     }
     throw new Error("HTTP "+r.status+" — "+t.slice(0,200));
   }
+  // --- fallback entre provedores ---
+  const ERRO_REDE=/failed to fetch|networkerror|load failed|network error|econnrefused|econnreset|enotfound|tempo esgotado|timeout|fetch/i;
+  function erroFallback(e,sig){
+    if(sig&&sig.aborted)return false;
+    if(!(state.fb&&state.fb.base&&state.fb.key&&state.fb.model))return false;
+    if(e&&e.name==="TimeoutError")return true;
+    const s=(e&&e.message)||"";
+    return /HTTP (?:408|409|425|429|5\d\d)/.test(s)||ERRO_REDE.test(s);
+  }
+  function optsFallback(opts){
+    return Object.assign({},opts,{
+      base:state.fb.base,key:state.fb.key,model:state.fb.model,
+      recarregarModelos:null,
+      getModel:()=>state.fb.model,
+      onModeloTrocado:()=>{},
+      onStatus:t=>{ if(opts&&opts.onStatus)opts.onStatus("reserva: "+t); }
+    });
+  }
+  async function comFallback(fn,opts){
+    try{
+      return await fn(opts);
+    }catch(e){
+      if(!erroFallback(e,opts&&opts.signal)){
+        if(opts&&opts.onFallback)opts.onFallback(false);
+        throw e;
+      }
+      if(opts&&opts.onFallback)opts.onFallback(true);
+      if(opts&&opts.onStatus)opts.onStatus("principal falhou ("+(e.message||e)+") — tentando o provedor reserva...");
+      try{
+        return await fn(optsFallback(opts));
+      }catch(e2){
+        throw new Error("principal: "+(e.message||e)+" | reserva: "+(e2.message||e2));
+      }
+    }
+  }
   // dispara uma chamada não-streaming simples (usado no "melhorar prompt")
   async function chamarChatUma(opts){
-    const r=await chamarChat(Object.assign({stream:false},opts));
+    const r=await comFallback(chamarChat,Object.assign({stream:false},opts));
     const j=await r.json();
     return (j.choices?.[0]?.message?.content||"").trim();
   }
 
   async function send(forcarSemHist){
     const inp=$("#chatInput"); const text=inp.value.trim();
-    if(!text||state.busy) return;
-    if(!state.key){ toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return; }
+    const anexos=(state.anexos||[]).slice();
+    if((!text&&!anexos.length)||state.busy) return;
+    if(!state.key&&!(state.fb&&state.fb.base&&state.fb.key&&state.fb.model)){
+      toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return;
+    }
     inp.value="";
+    state.anexos=[]; renderAnexos();
     const c=conv();
-    c.msgs.push({role:"user",content:text});
-    if(c.title==="Nova conversa"||!c.title) c.title=text.slice(0,40);
+    const um={role:"user",content:text};
+    if(anexos.length)um.attachments=anexos;
+    c.msgs.push(um);
+    if(c.title==="Nova conversa"||!c.title) c.title=(text||(anexos[0]&&anexos[0].nome)||"anexo").slice(0,40);
     const aIdx=c.msgs.push({role:"assistant",content:"",reasoning:""})-1;
     renderChat(); save();
     state.busy=true; $("#sendBtn").disabled=true; $("#stopBtn").style.display=""; setStatus("gerando..."); atualizaBotoesMsg();
@@ -568,14 +901,26 @@
     const histTotal=c.msgs.slice(0,-1);
     const hist=forcarSemHist?histTotal.slice(-1):histTotal;
     try{
-      const r=await chamarChat({
+      let viaReserva=false;
+      const baseOpts={
         base:state.base,key:state.key,model:state.model,signal:ctrl.signal,stream:true,
         system:state.sys,hist:hist,
         onStatus:setStatus,
         recarregarModelos:loadModels,
         getModel:()=>state.model,
-        onModeloTrocado:(antes,novo)=>toast("\""+antes+"\" indisponível — trocado para \""+novo+"\", reenviando...")
-      });
+        onModeloTrocado:(antes,novo)=>toast("\""+antes+"\" indisponível — trocado para \""+novo+"\", reenviando..."),
+        transformar:paraApi,
+        onFallback:v=>{ viaReserva=v; }
+      };
+      let r;
+      if(state.key){
+        r=await comFallback(chamarChat,baseOpts);
+      }else{
+        Object.assign(baseOpts,{base:state.fb.base,key:state.fb.key,model:state.fb.model,recarregarModelos:null});
+        viaReserva=true;
+        r=await chamarChat(baseOpts);
+      }
+      if(viaReserva)toast("Respondendo pelo provedor reserva");
       const rd=r.body.getReader(); const dec=new TextDecoder(); let buf="";
       // timeout por chunk: se o provedor parar de enviar no meio do stream, não trava para sempre
       async function lerStream(){
@@ -655,10 +1000,10 @@
     if(ui<0)return;
     // apaga resposta (e raciocínio) e reenvia a mesma pergunta
     msgs.length=ui+1;
-    const text=msgs[ui].content;
+    const user=msgs[ui];
     msgs.pop(); // remove o user; send() re-adiciona
     renderChat(); save();
-    $("#chatInput").value=text;
+    carregarNaCaixa(user);
     send();
   }
   function editarUltima(){
@@ -666,7 +1011,7 @@
     const msgs=chat(); const ui=lastUserIdx();
     if(ui<0)return;
     const m=msgs[ui];
-    $("#chatInput").value=m.content;
+    carregarNaCaixa(m);
     msgs.length=ui; // corta a pergunta e tudo depois
     renderChat(); save();
     $("#chatInput").focus();
@@ -698,6 +1043,11 @@
     });
   }
   function persistImg(){
+    if(IDB.tem){
+      try{ localStorage.setItem(LS.img,JSON.stringify(state.img.map(x=>({p:x.p,w:x.w,h:x.h,m:x.m,t:x.t})))); }catch(e){}
+      agendaIDB();
+      return;
+    }
     // estourou quota: descarta as mais antigas até caber
     for(let keep=state.img.length;keep>0;keep--){
       try{
@@ -848,7 +1198,29 @@
     $("#cfgKey").value=state.key;
     $("#cfgPKey").value=state.pkey;
     $("#cfgModel").innerHTML='<option>'+esc(state.model)+'</option>';
+    $("#cfgFbProv").value=state.fb.prov||"";
+    $("#cfgFbBase").value=state.fb.base||"";
+    $("#cfgFbKey").value=state.fb.key||"";
+    $("#cfgFbModel").innerHTML=state.fb.model?'<option>'+esc(state.fb.model)+'</option>':'<option value=""></option>';
     $("#cfgSys").value=state.sys;
+  }
+  async function loadModelsFb(){
+    const k=($("#cfgFbKey").value||"").trim();
+    if(!k){ toast("Cole a chave do reserva primeiro",true); return []; }
+    const base=($("#cfgFbBase").value||"").trim().replace(/\/+$/,"");
+    if(!base){ toast("Informe a Base URL do reserva",true); return []; }
+    setStatus("carregando modelos do reserva...");
+    try{
+      const r=await fetch(base+"/models",{headers:{"Authorization":"Bearer "+k}});
+      if(!r.ok)throw new Error("HTTP "+r.status+(r.status===401?" (chave inválida?)":""));
+      const j=await r.json();
+      const ids=(j.data||[]).map(m=>m.id).filter(x=>!/whisper|tts|guard|embed|orpheus|prompt-guard/i.test(x)).sort();
+      if(!ids.length){ toast("A API não retornou modelos — verifique a Base URL",true); return []; }
+      $("#cfgFbModel").innerHTML=ids.map(id=>'<option>'+esc(id)+'</option>').join("");
+      toast(ids.length+" modelos do reserva carregados");
+      return ids;
+    }catch(e){ toast("Erro ao carregar modelos do reserva: "+e.message,true); return []; }
+    finally{ setStatus(""); }
   }
   async function loadModels(baseOverride){
     const k=($("#cfgKey").value||state.key||"").trim();
@@ -882,12 +1254,20 @@
     if(mSel) state.model=mSel;
     else{ loadCfg(); toast("Escolha um modelo antes de salvar (botão \"Carregar modelos\")",true); return; }
     state.sys=$("#cfgSys").value.trim()||DEF_SYS;
+    state.fb={
+      prov:$("#cfgFbProv").value,
+      base:$("#cfgFbBase").value.trim().replace(/\/+$/,""),
+      key:$("#cfgFbKey").value.trim(),
+      model:$("#cfgFbModel").value.trim()
+    };
+    if(!state.fb.prov&&!state.fb.base&&!state.fb.key)state.fb={prov:"",base:"",key:"",model:""};
     localStorage.setItem(LS.prov,state.prov);
     localStorage.setItem(LS.base,state.base);
     localStorage.setItem(LS.key,state.key);
     localStorage.setItem(LS.pkey,state.pkey);
     localStorage.setItem(LS.model,state.model);
     localStorage.setItem(LS.sys,state.sys);
+    localStorage.setItem(LS.fb,JSON.stringify(state.fb));
     toast("Configurações salvas");
     if(state.key&&$("#cfgModel").options.length<=1) loadModels();
   }
@@ -900,6 +1280,44 @@
     state.convs.unshift(n); state.convId=n.id;
     save(); renderChat();
     $("#chatInput").focus();
+  }
+
+  // --- voz: ditado e leitura ---
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  let rec=null;
+  function ditar(){
+    if(!SR){ toast("Seu navegador não suporta ditado por voz",true); return; }
+    const btn=$("#micBtn");
+    if(rec){ try{ rec.stop(); }catch(e){} return; }
+    try{ rec=new SR(); }catch(e){ toast("Falha ao iniciar o microfone: "+e.message,true); return; }
+    rec.lang="pt-BR"; rec.interimResults=true; rec.continuous=false;
+    const inp=$("#chatInput"); const ini=inp.value; let fim="";
+    rec.onstart=()=>{ if(btn){ btn.classList.add("on"); btn.textContent="ouvindo..."; } setStatus("ouvindo..."); };
+    rec.onresult=e=>{
+      let parcial="";
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        const t=e.results[i][0].transcript;
+        if(e.results[i].isFinal)fim+=t; else parcial+=t;
+      }
+      inp.value=(ini?ini.replace(/\s+$/,"")+" ":"")+fim+parcial;
+    };
+    rec.onerror=e=>{ toast("Ditado: "+(e.error||"erro"),true); };
+    rec.onend=()=>{
+      rec=null;
+      if(btn){ btn.classList.remove("on"); btn.textContent="ditar"; }
+      inp.value=inp.value.trim(); setStatus(""); inp.focus();
+    };
+    try{ rec.start(); }
+    catch(e){ rec=null; if(btn){ btn.classList.remove("on"); btn.textContent="ditar"; } toast("Não foi possível iniciar o ditado: "+e.message,true); }
+  }
+  function falar(txt){
+    if(!window.speechSynthesis||typeof SpeechSynthesisUtterance==="undefined"){ toast("Leitura em voz não suportada",true); return false; }
+    const s=window.speechSynthesis;
+    if(s.speaking){ s.cancel(); return false; }
+    const limpo=String(txt||"").replace(/```[\s\S]*?```/g," (bloco de código) ").replace(/[#*_`>]/g,"").slice(0,4000);
+    const u=new SpeechSynthesisUtterance(limpo);
+    u.lang="pt-BR"; s.speak(u);
+    return true;
   }
 
   // --- navegação ---
@@ -916,6 +1334,16 @@
     if(p.base)$("#cfgBase").value=p.base;
     if(p.model){ $("#cfgModel").innerHTML='<option>'+esc(p.model)+'</option>'; }
   };
+  $("#cfgFbProv").onchange=()=>{
+    const p=PRESETS[$("#cfgFbProv").value];
+    if(!p)return;
+    if(p.base)$("#cfgFbBase").value=p.base;
+    if(p.model){ $("#cfgFbModel").innerHTML='<option>'+esc(p.model)+'</option>'; }
+  };
+  $("#attachBtn").onclick=()=>$("#chatFile").click();
+  $("#chatFile").onchange=e=>{ adicionarArquivos(e.target.files); e.target.value=""; };
+  $("#micBtn").onclick=ditar;
+  $("#themeBtn").onclick=()=>aplicaTema(state.tema==="light"?"dark":"light");
   $("#sendBtn").onclick=()=>send();
   $("#stopBtn").onclick=()=>state.abort&&state.abort.abort();
   $("#clearBtn").onclick=()=>novaConversa();
@@ -958,16 +1386,40 @@
   $("#cfgExport").onclick=exportar;
   $("#cfgImport").onclick=()=>$("#cfgImportFile").click();
   $("#cfgImportFile").onchange=e=>{ const f=e.target.files[0]; if(f)importar(f); e.target.value=""; };
+  $("#cfgMd").onclick=exportarMd;
+  $("#cfgCopy").onclick=copiarConversa;
+  $("#cfgFbLoad").onclick=()=>loadModelsFb();
+  // arrastar e soltar / colar arquivos no chat
+  const chatView=$("#v-chat");
+  if(chatView){
+    ["dragenter","dragover"].forEach(ev=>chatView.addEventListener(ev,e=>{
+      if(state.busy)return;
+      const tipos=Array.from((e.dataTransfer&&e.dataTransfer.types)||[]);
+      if(tipos.includes("Files")){ e.preventDefault(); e.dataTransfer.dropEffect="copy"; }
+    }));
+    chatView.addEventListener("drop",e=>{
+      const f=e.dataTransfer&&e.dataTransfer.files;
+      if(f&&f.length){ e.preventDefault(); adicionarArquivos(f); }
+    });
+  }
+  $("#chatInput").addEventListener("paste",e=>{
+    const itens=(e.clipboardData&&e.clipboardData.items)||[];
+    const arqs=[];
+    for(const it of itens){ if(it.kind==="file"){ const f=it.getAsFile(); if(f)arqs.push(f); } }
+    if(arqs.length){ e.preventDefault(); adicionarArquivos(arqs); }
+  });
   $("#regenBtn").onclick=regenerar;
   $("#editBtn").onclick=editarUltima;
   $("#semHistBtn").onclick=reenviarSemHist;
 
   // init
+  aplicaTema(state.tema);
   state.img=state.img.filter(x=>x&&x.p&&x.w&&x.h&&(!x.u||/^(data:image\/|https?:)/i.test(x.u)));
-  loadCfg(); renderChat(); renderImg(); renderVid();
+  loadCfg(); renderChat(); renderImg(); renderVid(); renderAnexos();
+  hidratarIDB();
   (function(){
     const falta=[];
-    if(!state.key)falta.push("API (chat)");
+    if(!state.key&&!(state.fb&&state.fb.key))falta.push("API (chat)");
     if(!state.pkey)falta.push("Pollinations (imagem)");
     setStatus(falta.length?"falta configurar: "+falta.join(" e "):"pronta");
   })();
@@ -976,7 +1428,7 @@
     navigator.serviceWorker.register("sw.js").catch(()=>{});
   }
   // hooks para testes automatizados (não usados em produção)
-  window.__assistente={send,state,improve,chamarChat,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg};
+  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar};
 })();
 </script>
 </body>
