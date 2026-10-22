@@ -66,6 +66,36 @@ global.FileReader = function(){ return { readAsText(){}, set onload(f){}, set on
 global.confirm = () => true;
 global.alert = () => {};
 
+// IndexedDB falso para os testes extras: IDB=1 node test/harness.js
+function fakeIndexedDB(){
+  const dados = {};
+  const clonar = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+  function transacao(){
+    const h = {};
+    const store = {
+      get(k){ const r = {}; setTimeout(() => { r.result = clonar(dados[k]); }, 0); return r; },
+      put(v, k){ dados[k] = clonar(v); return { result: k }; },
+    };
+    return {
+      objectStore(){ return store; },
+      set oncomplete(f){ h.c = f; setTimeout(() => { if (f) f(); }, 5); },
+      onerror: null, onabort: null,
+    };
+  }
+  return {
+    open(){
+      const req = {};
+      setTimeout(() => {
+        req.result = { createObjectStore(){}, transaction(){ return transacao(); } };
+        if (req.onupgradeneeded) req.onupgradeneeded();
+        if (req.onsuccess) req.onsuccess();
+      }, 0);
+      return req;
+    },
+  };
+}
+if (process.env.IDB) global.indexedDB = fakeIndexedDB();
+
 let fetchImpl = null;
 global.fetch = (...a) => fetchImpl(...a);
 global.__assistenteCode = null;
@@ -515,6 +545,55 @@ function prepararConv(nPares, model) {
       t.aplicaTema("dark");
       assert(global.document.documentElement.getAttribute("data-theme") === null, "não voltou escuro");
     });
+  }
+
+  // ---- testes com IndexedDB (rodar com IDB=1) ----
+  if (process.env.IDB) {
+    // 26) save(): localStorage enxuto, IndexedDB completo
+    {
+      const c = prepararConv(0);
+      c.msgs.length = 0;
+      c.msgs.push({ role: "user", content: "oi", attachments: [{ nome: "a.txt", tipo: "texto", conteudo: "GRANDE", tamanho: 6 }] });
+      c.msgs.push({ role: "assistant", content: "ok" });
+      await run("IDB -> save() guarda versão enxuta no localStorage e completa no IndexedDB", async () => {
+        t.save();
+        const ls = JSON.parse(localStorage.getItem("st_convs"));
+        const attLs = ls.find(x => x.id === c.id).msgs.find(m => m.attachments).attachments[0];
+        assert(attLs.conteudo === undefined, "localStorage não foi enxugado");
+        await new Promise(r => setTimeout(r, 380));
+        const cheio = await t.IDB.get("convs");
+        const attIdb = cheio.find(x => x.id === c.id).msgs.find(m => m.attachments).attachments[0];
+        assert(attIdb.conteudo === "GRANDE", "IndexedDB não guardou o conteúdo");
+      });
+    }
+
+    // 27) hidratarIDB restaura anexos após "recarregar"
+    {
+      const antes = t.state.convs.find(c => c.msgs.some(m => m.attachments && m.attachments.length));
+      if (antes) antes.msgs.find(m => m.attachments).attachments[0].conteudo = "";
+      t.state.convs = [];
+      t.state.convId = "";
+      await run("IDB -> hidratarIDB() restaura conversa e anexos", async () => {
+        await t.hidratarIDB();
+        const c = t.state.convs.find(x => x.msgs.some(m => m.attachments && m.attachments.length));
+        assert(c, "conversa não voltou");
+        assert(c.msgs.find(m => m.attachments).attachments[0].conteudo === "GRANDE", "anexo não restaurado");
+      });
+    }
+
+    // 28) imagens: LS enxuto + restauração
+    {
+      t.state.img = [{ p: "gato", w: 1, h: 1, m: "flux", u: "data:image/jpeg;base64,ABC", t: 1 }];
+      await run("IDB -> persistImg() e hidratarIDB() preservam as imagens", async () => {
+        t.persistImg();
+        const ls = JSON.parse(localStorage.getItem("st_img_history"));
+        assert(ls[0].u === undefined, "localStorage guardou a imagem inteira");
+        await new Promise(r => setTimeout(r, 380));
+        t.state.img = [];
+        await t.hidratarIDB();
+        assert(t.state.img.length === 1 && /^data:image\//.test(t.state.img[0].u), "imagem não restaurada");
+      });
+    }
   }
 
   console.log(falhas ? "\n" + falhas + " FALHA(S)" : "\nTODOS OS TESTES PASSARAM");

@@ -65,6 +65,9 @@
   .anexo-txt pre{max-height:220px;overflow:auto;background:var(--code);color:var(--codefg);border:1px solid var(--borda);border-radius:8px;padding:8px}
   .anexo-txt summary{cursor:pointer;color:var(--mut)}
   button.on{background:var(--ok);color:#04231a}
+  .badge{font-size:11px;background:var(--bg3);border:1px solid var(--borda);color:var(--mut);border-radius:999px;padding:2px 8px;white-space:nowrap}
+  .badge.warn{color:#ffd27a;border-color:#7a5a1f}
+  .chip.lendo{color:var(--mut)}
   textarea,input,select{background:var(--bg3);color:var(--fg);border:1px solid var(--borda);border-radius:8px;padding:9px 11px;font:inherit;outline:none;width:100%}
   textarea{resize:vertical;min-height:46px;max-height:200px}
   textarea:focus,input:focus,select:focus{border-color:var(--acc2)}
@@ -112,6 +115,7 @@
     <div class="tab" data-v="vid">Vídeo</div>
     <div class="tab" data-v="cfg">Config</div>
   </div>
+  <span class="badge warn" id="fbBadge" style="display:none" title="A resposta atual veio do provedor reserva">reserva</span>
   <button id="themeBtn" class="sec" title="Alternar tema claro/escuro" style="padding:6px 10px">tema</button>
   <div class="status" id="status"></div>
 </header>
@@ -472,8 +476,9 @@
     const box=$("#anexosPrev");
     if(!box)return;
     const arr=state.anexos||[];
-    box.style.display=arr.length?"flex":"none";
-    box.innerHTML=arr.map((a,i)=>{
+    const lendo=state.lendo||0;
+    box.style.display=(arr.length||lendo)?"flex":"none";
+    box.innerHTML=(lendo?'<span class="chip lendo"><span class="sp"></span>lendo '+lendo+' arquivo(s)...</span>':"")+arr.map((a,i)=>{
       const rotulo=esc(a.nome)+' ('+fmtTam(a.tamanho)+')';
       const mid=a.tipo==="imagem"&&a.conteudo?'<img src="'+esc(a.conteudo)+'" alt="">':"";
       return '<span class="chip">'+mid+'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+rotulo+'</span>'+
@@ -494,29 +499,38 @@
   async function adicionarArquivo(file){
     if(!file)return;
     if(state.anexos.length>=MAX_ANEXOS){ toast("Máximo de "+MAX_ANEXOS+" anexos por mensagem",true); return; }
-    const nome=limpaNome(file.name||("colado-"+Date.now()));
-    const tipo=file.type||"";
-    if(tipo.startsWith("image/")){
-      try{
-        const u=await blobToDataUrl(file,1280,0.82);
-        state.anexos.push({nome,tipo:"imagem",mime:tipo,conteudo:u,tamanho:file.size||u.length});
-      }catch(e){ toast("Falha ao ler imagem: "+e.message,true); return; }
-    }else if(tipo.startsWith("text/")||EXT_TXT.test(nome)){
-      if(file.size>MAX_TXT){ toast("Arquivo de texto muito grande (máx. 200 KB)",true); return; }
-      try{
-        const txt=await lerTexto(file);
-        state.anexos.push({nome,tipo:"texto",mime:tipo||"text/plain",conteudo:txt,tamanho:file.size||txt.length});
-      }catch(e){ toast("Falha ao ler arquivo: "+e.message,true); return; }
-    }else{
-      toast("Tipo não suportado — use imagem ou arquivo de texto",true); return;
+    state.lendo=(state.lendo||0)+1; renderAnexos();
+    try{
+      const nome=limpaNome(file.name||("colado-"+Date.now()));
+      const tipo=file.type||"";
+      if(tipo.startsWith("image/")){
+        try{
+          const u=await blobToDataUrl(file,1280,0.82);
+          state.anexos.push({nome,tipo:"imagem",mime:tipo,conteudo:u,tamanho:file.size||u.length});
+        }catch(e){ toast("Falha ao ler imagem: "+e.message,true); return; }
+      }else if(tipo.startsWith("text/")||EXT_TXT.test(nome)){
+        if(file.size>MAX_TXT){ toast("Arquivo de texto muito grande (máx. 200 KB)",true); return; }
+        try{
+          const txt=await lerTexto(file);
+          state.anexos.push({nome,tipo:"texto",mime:tipo||"text/plain",conteudo:txt,tamanho:file.size||txt.length});
+        }catch(e){ toast("Falha ao ler arquivo: "+e.message,true); return; }
+      }else{
+        toast("Tipo não suportado — use imagem ou arquivo de texto",true); return;
+      }
+    }finally{
+      state.lendo=Math.max(0,(state.lendo||1)-1);
+      renderAnexos();
     }
-    renderAnexos();
   }
   async function adicionarArquivos(files){
     for(const f of Array.from(files||[])) await adicionarArquivo(f);
   }
 
   // --- tema claro/escuro ---
+  function marcaFallback(v){
+    const b=$("#fbBadge");
+    if(b)b.style.display=v?"":"none";
+  }
   function aplicaTema(t){
     state.tema=t==="light"?"light":"dark";
     try{
@@ -901,6 +915,7 @@
     const histTotal=c.msgs.slice(0,-1);
     const hist=forcarSemHist?histTotal.slice(-1):histTotal;
     try{
+      marcaFallback(false);
       let viaReserva=false;
       const baseOpts={
         base:state.base,key:state.key,model:state.model,signal:ctrl.signal,stream:true,
@@ -910,7 +925,7 @@
         getModel:()=>state.model,
         onModeloTrocado:(antes,novo)=>toast("\""+antes+"\" indisponível — trocado para \""+novo+"\", reenviando..."),
         transformar:paraApi,
-        onFallback:v=>{ viaReserva=v; }
+        onFallback:v=>{ viaReserva=v; marcaFallback(v); }
       };
       let r;
       if(state.key){
@@ -918,6 +933,7 @@
       }else{
         Object.assign(baseOpts,{base:state.fb.base,key:state.fb.key,model:state.fb.model,recarregarModelos:null});
         viaReserva=true;
+        marcaFallback(true);
         r=await chamarChat(baseOpts);
       }
       if(viaReserva)toast("Respondendo pelo provedor reserva");
@@ -958,6 +974,7 @@
       }
       save(); renderChat(); setStatus([marcaUso(state.usage),marcaContexto()].filter(Boolean).join(" · "));
     }catch(e){
+      marcaFallback(false);
       if(e.name==="TimeoutError"){ toast("Erro: "+e.message,true); }
       else if(e.name==="AbortError"||/cancelado/.test(e.message)){ toast("Geração parada"); }
       else{ toast("Erro: "+e.message,true); }
@@ -1428,7 +1445,7 @@
     navigator.serviceWorker.register("sw.js").catch(()=>{});
   }
   // hooks para testes automatizados (não usados em produção)
-  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar};
+  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar,IDB,hidratarIDB,save,persistImg,marcaFallback};
 })();
 </script>
 </body>
