@@ -1,0 +1,9 @@
+# logs
+*.log
+
+# modelos locais (grandes e re-baixáveis)
+*.llamafile
+*.gguf
+
+# sistema
+.DS_Store
