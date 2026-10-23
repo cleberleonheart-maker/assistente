@@ -68,6 +68,9 @@
   .badge{font-size:11px;background:var(--bg3);border:1px solid var(--borda);color:var(--mut);border-radius:999px;padding:2px 8px;white-space:nowrap}
   .badge.warn{color:#ffd27a;border-color:#7a5a1f}
   .chip.lendo{color:var(--mut)}
+  #v-chat{position:relative}
+  .dropmask{position:absolute;inset:8px;border:2px dashed var(--acc2);border-radius:12px;background:rgba(15,17,21,.72);display:flex;align-items:center;justify-content:center;color:var(--fg);font-weight:600;z-index:20;pointer-events:none;font-size:15px}
+  :root[data-theme="light"] .dropmask{background:rgba(246,247,249,.8)}
   textarea,input,select{background:var(--bg3);color:var(--fg);border:1px solid var(--borda);border-radius:8px;padding:9px 11px;font:inherit;outline:none;width:100%}
   textarea{resize:vertical;min-height:46px;max-height:200px}
   textarea:focus,input:focus,select:focus{border-color:var(--acc2)}
@@ -123,6 +126,7 @@
 <main>
   <!-- CHAT -->
   <section class="view on" id="v-chat">
+    <div class="dropmask" id="dropMask" style="display:none">solte os arquivos para anexar</div>
     <div class="convbar">
       <input id="convBusca" type="search" placeholder="buscar conversas..." title="Filtra pelo título ou conteúdo" style="flex:1;min-width:120px">
       <select id="convSel" title="Conversas"></select>
@@ -269,6 +273,7 @@
           <button id="cfgImport" class="sec">Importar (JSON)</button>
           <button id="cfgMd" class="sec">Conversa atual (Markdown)</button>
           <button id="cfgCopy" class="sec">Copiar conversa</button>
+          <button id="cfgResumo" class="sec">Resumir histórico</button>
           <input type="file" id="cfgImportFile" accept=".json,application/json" style="display:none">
         </div>
         <div class="hint">Exporta todas as conversas com mensagens. Importar mescla com as atuais (títulos repetidos são mantidos como conversas separadas). "Conversa atual" baixa a conversa em Markdown.</div>
@@ -584,6 +589,41 @@
       toast("Conversa copiada em Markdown");
     }catch(e){ toast("Falha ao copiar: "+e.message,true); }
   }
+  // resume as mensagens antigas para reduzir o contexto enviado
+  async function resumirHistorico(){
+    if(state.busy){ toast("Aguarde a geração terminar",true); return; }
+    const c=conv(); const msgs=c.msgs;
+    if(msgs.length<6){ toast("Histórico curto — não precisa resumir"); return; }
+    if(!state.key&&!(state.fb&&state.fb.base&&state.fb.key&&state.fb.model)){
+      toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return;
+    }
+    const corte=msgs.length-4;
+    const texto=msgs.slice(0,corte).map(m=>{
+      let t=textoComAnexos(m);
+      ((m&&m.attachments)||[]).forEach(a=>{ if(a.tipo==="imagem")t+="\n[imagem: "+(a.nome||"anexo")+"]"; });
+      return (m.role==="user"?"Usuário: ":"Assistente: ")+t;
+    }).join("\n\n").slice(0,24000);
+    setStatus("resumindo histórico...");
+    try{
+      const resumo=await chamarChatUma({
+        base:state.base,key:state.key,model:state.model,
+        messages:[
+          {role:"system",content:"Resuma a conversa abaixo em português. Preserve fatos, decisões, nomes, números e pendências. Seja conciso, no máximo 300 palavras."},
+          {role:"user",content:texto}
+        ],
+        onStatus:setStatus,
+        recarregarModelos:loadModels,
+        getModel:()=>state.model,
+        onModeloTrocado:(a,b)=>toast("\""+a+"\" indisponível — usando \""+b+"\" para o resumo")
+      });
+      if(!resumo){ toast("O modelo não retornou resumo",true); return; }
+      const total=msgs.length;
+      c.msgs=[{role:"assistant",content:"[Resumo do histórico anterior]\n"+resumo,resumo:true}].concat(msgs.slice(corte));
+      save(); renderChat();
+      toast("Histórico resumido ("+total+" mensagens)");
+    }catch(e){ toast("Falha ao resumir: "+e.message,true); }
+    finally{ setStatus(""); }
+  }
 
   function toast(m,err){ const t=$("#toast"); t.textContent=m; t.className="toast on"+(err?" err":""); setTimeout(()=>t.className="toast",2600); }
   function esc(s){ return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
@@ -888,7 +928,8 @@
   }
   // dispara uma chamada não-streaming simples (usado no "melhorar prompt")
   async function chamarChatUma(opts){
-    const r=await comFallback(chamarChat,Object.assign({stream:false},opts));
+    const o=Object.assign({stream:false},opts);
+    const r=o.key?await comFallback(chamarChat,o):await chamarChat(optsFallback(o));
     const j=await r.json();
     return (j.choices?.[0]?.message?.content||"").trim();
   }
@@ -909,7 +950,8 @@
     if(c.title==="Nova conversa"||!c.title) c.title=(text||(anexos[0]&&anexos[0].nome)||"anexo").slice(0,40);
     const aIdx=c.msgs.push({role:"assistant",content:"",reasoning:""})-1;
     renderChat(); save();
-    state.busy=true; $("#sendBtn").disabled=true; $("#stopBtn").style.display=""; setStatus("gerando..."); atualizaBotoesMsg();
+    state.busy=true; state.parar=false;
+    $("#sendBtn").disabled=true; $("#stopBtn").style.display=""; setStatus("gerando..."); atualizaBotoesMsg();
     const ctrl=new AbortController(); state.abort=ctrl;
     state.usage=null;
     const histTotal=c.msgs.slice(0,-1);
@@ -937,40 +979,58 @@
         r=await chamarChat(baseOpts);
       }
       if(viaReserva)toast("Respondendo pelo provedor reserva");
-      const rd=r.body.getReader(); const dec=new TextDecoder(); let buf="";
-      // timeout por chunk: se o provedor parar de enviar no meio do stream, não trava para sempre
-      async function lerStream(){
-        let id=null;
-        try{
-          return await Promise.race([
-            rd.read(),
-            new Promise((_,rej)=>{
-              id=setTimeout(()=>{
-                const e=new Error("tempo esgotado — o provedor parou de responder no meio da resposta");
-                e.name="TimeoutError"; ctrl.abort(); rej(e);
-              },LS_TIMEOUT);
-            })
-          ]);
-        }finally{ clearTimeout(id); }
-      }
-      while(true){
-        const {done,value}=await lerStream(); if(done)break;
-        buf+=dec.decode(value,{stream:true});
-        const lines=buf.split("\n"); buf=lines.pop();
-        for(const ln of lines){
-          const s=ln.trim(); if(!s.startsWith("data:"))continue;
-          const d=s.slice(5).trim(); if(d==="[DONE]")continue;
+      let erroStreamTempo=false;
+      async function consumir(resp,sinal){
+        const rd=resp.body.getReader(); const dec=new TextDecoder(); let buf="";
+        erroStreamTempo=false;
+        // timeout por chunk: se o provedor parar de enviar no meio do stream, não trava para sempre
+        async function lerStream(){
+          let id=null;
           try{
-            const j=JSON.parse(d);
-            const delta=j.choices?.[0]?.delta||{};
-            let upd=false;
-            const rsn=delta.reasoning_content||delta.reasoning;
-            if(rsn){ c.msgs[aIdx].reasoning=(c.msgs[aIdx].reasoning||"")+rsn; upd=true; }
-            if(delta.content){ c.msgs[aIdx].content+=delta.content; upd=true; }
-            if(j.usage)state.usage=j.usage;
-            if(upd) renderLast();
-          }catch(e){}
+            return await Promise.race([
+              rd.read(),
+              new Promise((_,rej)=>{
+                id=setTimeout(()=>{
+                  const e=new Error("tempo esgotado — o provedor parou de responder no meio da resposta");
+                  e.name="TimeoutError"; erroStreamTempo=true; sinal.abort(); rej(e);
+                },LS_TIMEOUT);
+              })
+            ]);
+          }finally{ clearTimeout(id); }
         }
+        while(true){
+          const {done,value}=await lerStream(); if(done)break;
+          buf+=dec.decode(value,{stream:true});
+          const lines=buf.split("\n"); buf=lines.pop();
+          for(const ln of lines){
+            const s=ln.trim(); if(!s.startsWith("data:"))continue;
+            const d=s.slice(5).trim(); if(d==="[DONE]")continue;
+            try{
+              const j=JSON.parse(d);
+              const delta=j.choices?.[0]?.delta||{};
+              let upd=false;
+              const rsn=delta.reasoning_content||delta.reasoning;
+              if(rsn){ c.msgs[aIdx].reasoning=(c.msgs[aIdx].reasoning||"")+rsn; upd=true; }
+              if(delta.content){ c.msgs[aIdx].content+=delta.content; upd=true; }
+              if(j.usage)state.usage=j.usage;
+              if(upd) renderLast();
+            }catch(e){}
+          }
+        }
+      }
+      try{
+        await consumir(r,ctrl);
+      }catch(e){
+        const podeReserva=!viaReserva && !state.parar &&
+          (erroStreamTempo || erroFallback(e,ctrl.signal));
+        if(!podeReserva) throw e;
+        toast("conexão caiu no meio — refazendo pelo provedor reserva...");
+        c.msgs[aIdx].content=""; c.msgs[aIdx].reasoning="";
+        renderLast();
+        viaReserva=true; marcaFallback(true);
+        const ctrl2=new AbortController(); state.abort=ctrl2;
+        const r2=await chamarChat(optsFallback(Object.assign({},baseOpts,{signal:ctrl2.signal})));
+        await consumir(r2,ctrl2);
       }
       save(); renderChat(); setStatus([marcaUso(state.usage),marcaContexto()].filter(Boolean).join(" · "));
     }catch(e){
@@ -1362,7 +1422,7 @@
   $("#micBtn").onclick=ditar;
   $("#themeBtn").onclick=()=>aplicaTema(state.tema==="light"?"dark":"light");
   $("#sendBtn").onclick=()=>send();
-  $("#stopBtn").onclick=()=>state.abort&&state.abort.abort();
+  $("#stopBtn").onclick=()=>{ state.parar=true; if(state.abort)state.abort.abort(); };
   $("#clearBtn").onclick=()=>novaConversa();
   $("#convNew").onclick=()=>novaConversa();
   $("#convRen").onclick=renomearConversa;
@@ -1385,7 +1445,7 @@
   // atalhos globais
   document.addEventListener("keydown",e=>{
     if(e.key==="Escape"){
-      if(state.busy&&state.abort)state.abort.abort();
+      if(state.busy&&state.abort){ state.parar=true; state.abort.abort(); }
       else if(document.activeElement===$("#convBusca")){ $("#convBusca").value=""; renderConvSel(); }
       return;
     }
@@ -1405,6 +1465,7 @@
   $("#cfgImportFile").onchange=e=>{ const f=e.target.files[0]; if(f)importar(f); e.target.value=""; };
   $("#cfgMd").onclick=exportarMd;
   $("#cfgCopy").onclick=copiarConversa;
+  $("#cfgResumo").onclick=resumirHistorico;
   $("#cfgFbLoad").onclick=()=>loadModelsFb();
   // arrastar e soltar / colar arquivos no chat
   const chatView=$("#v-chat");
@@ -1445,7 +1506,7 @@
     navigator.serviceWorker.register("sw.js").catch(()=>{});
   }
   // hooks para testes automatizados (não usados em produção)
-  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar,IDB,hidratarIDB,save,persistImg,marcaFallback};
+  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar,IDB,hidratarIDB,save,persistImg,marcaFallback,resumirHistorico};
 })();
 </script>
 </body>

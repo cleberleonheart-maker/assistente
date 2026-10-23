@@ -547,6 +547,45 @@ function prepararConv(nPares, model) {
     });
   }
 
+  // 26) queda no meio do stream -> refaz pelo reserva
+  {
+    const c = prepararConv(0);
+    t.state.fb = { prov: "openrouter", base: "https://fb.example/v1", key: "k2", model: "m2" };
+    getEl("#chatInput").value = "oi";
+    const enc = new TextEncoder().encode("data: " + JSON.stringify({ choices: [{ delta: { content: "parcial " } }] }) + "\n\n");
+    fetchImpl = async (url) => {
+      if (url.startsWith("https://fb.example")) return okStream("completo do reserva");
+      return { ok: true, status: 200,
+        body: { getReader(){ let i = 0; return { read(){ i++; if (i === 1) return Promise.resolve({ done: false, value: enc }); return Promise.reject(new Error("network error")); } }; } },
+        async text(){ return ""; }, async json(){ return {}; } };
+    };
+    await run("queda no meio do stream -> refaz a resposta pelo reserva", async () => {
+      await t.send();
+      const msgs = c.msgs;
+      assert(msgs[msgs.length - 1].content === "completo do reserva", "conteúdo: " + msgs[msgs.length - 1].content);
+      assert(!/parcial/.test(msgs[msgs.length - 1].content), "manteve o texto parcial");
+    });
+    t.state.fb = { prov: "", base: "", key: "", model: "" };
+  }
+
+  // 27) resumo de histórico
+  {
+    const c = prepararConv(6); // 12 mensagens
+    let corpo = null;
+    fetchImpl = async (url, opts) => {
+      if (!url.endsWith("/chat/completions")) return fail(404, "x");
+      corpo = JSON.parse(opts.body);
+      return { ok: true, status: 200, async json(){ return { choices: [{ message: { content: "RESUMO" } }] }; } };
+    };
+    await run("resumirHistorico -> troca mensagens antigas por um resumo", async () => {
+      await t.resumirHistorico();
+      assert(c.msgs.length === 5, "esperava 5 mensagens, veio " + c.msgs.length);
+      assert(/Resumo do histórico anterior/.test(c.msgs[0].content) && /RESUMO/.test(c.msgs[0].content), "sem resumo");
+      assert(c.msgs[0].resumo === true, "não marcou a mensagem de resumo");
+      assert(corpo && corpo.messages.length === 2, "payload inesperado");
+    });
+  }
+
   // ---- testes com IndexedDB (rodar com IDB=1) ----
   if (process.env.IDB) {
     // 26) save(): localStorage enxuto, IndexedDB completo
