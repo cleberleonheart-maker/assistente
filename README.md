@@ -70,8 +70,8 @@ Modelos de imagem: para enviar imagens no chat, o modelo precisa ser multimodal
 Sem navegador nem rede (DOM mínimo em Node):
 
 ```bash
-node chat/test/harness.js          # 29 testes
-IDB=1 node chat/test/harness.js    # inclui 3 testes do IndexedDB (32)
+node chat/test/harness.js          # 32 testes
+IDB=1 node chat/test/harness.js    # inclui 5 testes do IndexedDB (37)
 ```
 
 ## Estrutura

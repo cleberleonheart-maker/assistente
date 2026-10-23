@@ -330,14 +330,31 @@
     // migração: conversa única antiga (st_chat_history)
     try{
       const old=JSON.parse(localStorage.getItem("st_chat_history")||"null");
-      if(Array.isArray(old)&&old.length&&!cs[0].msgs.length){
+      if(Array.isArray(old)&&old.length&&Array.isArray(cs[0].msgs)&&!cs[0].msgs.length){
         cs[0].msgs=old;
         cs[0].title=(old.find(m=>m.role==="user")||{}).content?.slice(0,40)||"Conversa antiga";
         localStorage.removeItem("st_chat_history");
       }
     }catch(e){}
+    cs=cs.filter(c=>c&&typeof c==="object").map(c=>{
+      if(!Array.isArray(c.msgs))c.msgs=[];
+      if(!c.id)c.id=novoConv().id;
+      if(typeof c.title!=="string"||!c.title)c.title="Nova conversa";
+      c.t=+c.t||0;
+      return c;
+    });
+    if(!cs.length)cs=[novoConv()];
     return cs;
   }
+
+  function lsJson(k,fallback){
+    try{
+      const v=JSON.parse(localStorage.getItem(k)||"null");
+      return v==null?fallback:v;
+    }catch(e){ return fallback; }
+  }
+  const IMG_INI=lsJson(LS.img,[]);
+  const FB_INI=lsJson(LS.fb,null);
 
   const state = {
     key: localStorage.getItem(LS.key)||localStorage.getItem("st_groq_key")||"",
@@ -348,9 +365,9 @@
     sys: localStorage.getItem(LS.sys)||DEF_SYS,
     convs: carregarConvs(),
     convId: localStorage.getItem(LS.conv)||"",
-    img: JSON.parse(localStorage.getItem(LS.img)||"[]"),
+    img: Array.isArray(IMG_INI)?IMG_INI:[],
     tema: localStorage.getItem(LS.tema)||"dark",
-    fb: JSON.parse(localStorage.getItem(LS.fb)||"null")||{prov:"",base:"",key:"",model:""},
+    fb: Object.assign({prov:"",base:"",key:"",model:""},(FB_INI&&typeof FB_INI==="object")?FB_INI:{}),
     anexos: [],
     abort:null, busy:false, usage:null
   };
@@ -413,14 +430,54 @@
     if(!IDB.tem)return;
     try{
       const convs=await IDB.get("convs");
+      const ls=lsJson(LS.convs,[]);
+      const tLS=Array.isArray(ls)?ls.reduce((a,c)=>Math.max(a,+c.t||0),0):0;
+      const tIDB=Array.isArray(convs)?convs.reduce((a,c)=>Math.max(a,+c.t||0),0):0;
+      // mescla imagens: mantém as do IDB (com data URL) e inclui as novas do LS
+      const imgs=await IDB.get("img");
+      if(Array.isArray(imgs)&&imgs.length){
+        const mapa=new Map();
+        imgs.forEach(x=>{ if(x&&x.t)mapa.set(x.t,x); });
+        state.img.forEach(x=>{ if(x&&x.t&&!mapa.has(x.t))mapa.set(x.t,x); });
+        state.img=[...mapa.values()].sort((a,b)=>(b.t||0)-(a.t||0)).slice(0,40)
+          .filter(x=>x&&x.p&&x.w&&x.h&&(!x.u||/^(data:image\/|https?:)/i.test(x.u)));
+        renderImg();
+      }
+      // recarregou antes do debounce: o localStorage tem a alteração mais recente,
+      // mas os anexos completos (conteudo) só existem no IndexedDB
+      if(tLS>tIDB){
+        if(Array.isArray(convs)){
+          state.convs.forEach(c=>{
+            const ant=convs.find(x=>x&&x.id===c.id);
+            if(!ant||!Array.isArray(c.msgs)||!Array.isArray(ant.msgs))return;
+            c.msgs.forEach((m,i)=>{
+              if(!Array.isArray(m.attachments))return;
+              const am=ant.msgs[i];
+              if(!am||!Array.isArray(am.attachments))return;
+              m.attachments.forEach(a=>{
+                if(a.conteudo)return;
+                const b=am.attachments.find(x=>x&&x.nome===a.nome);
+                if(b&&b.conteudo)a.conteudo=b.conteudo;
+              });
+            });
+          });
+        }
+        IDB.set("convs",state.convs).catch(()=>{});
+        IDB.set("convId",state.convId).catch(()=>{});
+        return;
+      }
       if(Array.isArray(convs)&&convs.length){
-        state.convs=convs;
+        state.convs=convs.filter(c=>c&&typeof c==="object").map(c=>{
+          if(!Array.isArray(c.msgs))c.msgs=[];
+          if(!c.id)c.id=novoConv().id;
+          if(typeof c.title!=="string"||!c.title)c.title="Nova conversa";
+          c.t=+c.t||0;
+          return c;
+        });
         const cid=await IDB.get("convId");
-        if(cid&&convs.some(c=>c.id===cid))state.convId=cid;
-        else if(!convs.some(c=>c.id===state.convId))state.convId=convs[0].id;
-        const imgs=await IDB.get("img");
-        if(Array.isArray(imgs)&&imgs.length)state.img=imgs.slice(0,40);
-        renderChat(); renderImg(); loadCfg();
+        if(cid&&state.convs.some(c=>c.id===cid))state.convId=cid;
+        else if(!state.convs.some(c=>c.id===state.convId))state.convId=state.convs[0].id;
+        renderChat(); renderImg();
       }else{
         IDB.set("convs",state.convs).catch(()=>{});
         IDB.set("convId",state.convId).catch(()=>{});
@@ -626,7 +683,7 @@
   }
 
   function toast(m,err){ const t=$("#toast"); t.textContent=m; t.className="toast on"+(err?" err":""); setTimeout(()=>t.className="toast",2600); }
-  function esc(s){ return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
   function setStatus(t){ $("#status").textContent=t||""; }
   // estimativa grosseira de tokens do que será enviado (~4 caracteres por token)
   function estimaTokens(nMsgs){
@@ -695,7 +752,7 @@
     if(!q)return state.convs;
     return state.convs.filter(c=>{
       if((c.title||"").toLowerCase().includes(q))return true;
-      return c.msgs.some(m=>(m.content||"").toLowerCase().includes(q));
+      return c.msgs.some(m=>textoDe(m).toLowerCase().includes(q));
     });
   }
   function renderConvSel(){
@@ -706,7 +763,7 @@
       if(atual)lista.unshift(atual);
     }
     sel.innerHTML=lista.length
-      ? lista.map(c=>'<option value="'+c.id+'">'+esc(c.title||"Nova conversa")+'</option>').join("")
+      ? lista.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.title||"Nova conversa")+'</option>').join("")
       : '<option value="">(nenhuma conversa encontrada)</option>';
     sel.value=state.convId;
   }
@@ -776,7 +833,8 @@
     send();
   }
   // durante o stream, só re-renderiza a última mensagem (marcado+hljs pesam)
-  function renderLast(){
+  function renderLast(c){
+    if(c&&conv()!==c)return;
     const el=$("#chat");
     const msgs=chat();
     if(!msgs.length)return;
@@ -789,7 +847,7 @@
     if(m.reasoning&&m.reasoning.trim()){
       html+='<details class="reason"><summary>pensamento</summary><div>'+md(m.reasoning)+'</div></details>';
     }
-    html+=md(m.content);
+    html+=md(textoDe(m));
     body.innerHTML=html;
     addCopyButtons(body);
     const sc=$("#chatScroll"); sc.scrollTop=sc.scrollHeight;
@@ -1013,7 +1071,7 @@
               if(rsn){ c.msgs[aIdx].reasoning=(c.msgs[aIdx].reasoning||"")+rsn; upd=true; }
               if(delta.content){ c.msgs[aIdx].content+=delta.content; upd=true; }
               if(j.usage)state.usage=j.usage;
-              if(upd) renderLast();
+              if(upd) renderLast(c);
             }catch(e){}
           }
         }
@@ -1026,7 +1084,7 @@
         if(!podeReserva) throw e;
         toast("conexão caiu no meio — refazendo pelo provedor reserva...");
         c.msgs[aIdx].content=""; c.msgs[aIdx].reasoning="";
-        renderLast();
+        renderLast(c);
         viaReserva=true; marcaFallback(true);
         const ctrl2=new AbortController(); state.abort=ctrl2;
         const r2=await chamarChat(optsFallback(Object.assign({},baseOpts,{signal:ctrl2.signal})));
@@ -1064,10 +1122,9 @@
     const msgs=chat(); const ui=lastUserIdx();
     if(ui<0)return;
     msgs.length=ui+1;
-    const text=msgs[ui].content;
+    carregarNaCaixa(msgs[ui]);
     msgs.pop();
     renderChat(); save();
-    $("#chatInput").value=text;
     toast("Enviando só a última mensagem, sem histórico...");
     send(true);
   }
@@ -1159,7 +1216,7 @@
     try{
       setStatus("baixando...");
       const src=it.u||buildImgURL(it.p,it.w,it.h,it.m);
-      const r=await fetch(src); const b=await r.blob();
+      const r=await fetchComTimeout(src,null,180000); const b=await r.blob();
       const a=document.createElement("a"); const url=URL.createObjectURL(b);
       a.href=url; a.download="imagem-"+Date.now()+".jpg";
       document.body.appendChild(a); a.click();
@@ -1175,7 +1232,7 @@
     const url=buildImgURL(p,w,h,m);
     setStatus("gerando imagem..."); $("#imgGen").disabled=true;
     try{
-      const r=await fetch(url);
+      const r=await fetchComTimeout(url,null,180000);
       if(!r.ok){
         let msg="HTTP "+r.status;
         try{ const j=await r.json(); if(j&&j.error){ msg=j.error.message||msg; if(j.error.code==="FREE_LIMIT") msg="Limite grátis: 1 imagem a cada 45s. Espere ~45s ou configure a chave do Pollinations em Config."; } }catch(e){}
@@ -1193,19 +1250,20 @@
   async function improve(field){
     const inp=$(field); const p=inp.value.trim();
     if(!p){ toast("Escreva um prompt primeiro",true); return; }
-    if(!state.key){ toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return; }
+    const cfg=state.key
+      ?{base:state.base,key:state.key,model:state.model,recarregarModelos:loadModels}
+      :{base:state.fb.base,key:state.fb.key,model:state.fb.model};
+    if(!cfg.key||!cfg.base){ toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return; }
     const btnReset=inp.value; inp.value=p+" "; setStatus("melhorando...");
     try{
-      const txt=await chamarChatUma({
-        base:state.base,key:state.key,model:state.model,
+      const txt=await chamarChatUma(Object.assign({
         messages:[
           {role:"system",content:"Reescreva o prompt a seguir para ficar mais rico e visual, em português, uma única linha, sem explicações."},
           {role:"user",content:p}],
         onStatus:setStatus,
-        recarregarModelos:loadModels,
-        getModel:()=>state.model,
+        getModel:()=>state.key?state.model:state.fb.model,
         onModeloTrocado:(a,b)=>toast("\""+a+"\" indisponível — trocado para \""+b+"\"")
-      });
+      },cfg));
       inp.value=txt||p; toast("Prompt melhorado");
     }catch(e){ toast("Erro: "+e.message,true); inp.value=btnReset; }
     setStatus("");
@@ -1228,7 +1286,7 @@
   }
   function lastChat(){
     const msgs=chat();
-    for(let i=msgs.length-1;i>=0;i--){ const m=msgs[i]; if(m.content&&m.content.trim())return m.content.trim(); }
+    for(let i=msgs.length-1;i>=0;i--){ const t=textoDe(msgs[i]).trim(); if(t)return t; }
     return "";
   }
 
@@ -1256,8 +1314,16 @@
           if(!c||!Array.isArray(c.msgs))return;
           const novo=novoConv();
           novo.title=(c.title||"Importada").slice(0,60);
-          novo.msgs=c.msgs.filter(m=>m&&typeof m.content==="string")
-                           .map(m=>({role:m.role==="user"?"user":"assistant",content:m.content,reasoning:m.reasoning||""}));
+          novo.msgs=c.msgs.filter(m=>m&&(typeof m.content==="string"||Array.isArray(m.content)))
+                           .map(m=>{
+            const o={role:m.role==="user"?"user":"assistant",content:typeof m.content==="string"?m.content:"",reasoning:typeof m.reasoning==="string"?m.reasoning:""};
+            if(Array.isArray(m.attachments)){
+              o.attachments=m.attachments.filter(a=>a&&typeof a.nome==="string"&&typeof a.conteudo==="string")
+                .slice(0,MAX_ANEXOS).map(a=>({nome:a.nome,tipo:a.tipo==="imagem"?"imagem":"texto",mime:a.mime||"",tamanho:+a.tamanho||a.conteudo.length,conteudo:a.conteudo}));
+              if(!o.attachments.length)delete o.attachments;
+            }
+            return o;
+          });
           if(novo.msgs.length){ state.convs.unshift(novo); n++; }
         });
         if(!n){ toast("Nenhuma conversa encontrada no arquivo",true); return; }
@@ -1428,8 +1494,12 @@
   $("#convRen").onclick=renomearConversa;
   $("#convBusca").addEventListener("input",()=>renderConvSel());
   $("#convBusca").addEventListener("keydown",e=>{ if(e.key==="Escape"){ e.target.value=""; renderConvSel(); } });
-  $("#convSel").onchange=()=>{ state.convId=$("#convSel").value; save(); renderChat(); };
+  $("#convSel").onchange=()=>{
+    if(state.busy){ renderConvSel(); return; }
+    state.convId=$("#convSel").value; save(); renderChat();
+  };
   $("#convDel").onclick=()=>{
+    if(state.busy){ toast("Aguarde a geração terminar",true); return; }
     if(!confirm("Apagar esta conversa?"))return;
     state.convs=state.convs.filter(c=>c.id!==state.convId);
     if(!state.convs.length) state.convs=[novoConv()];
@@ -1439,7 +1509,7 @@
   $("#chatInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); return; }
     if(e.key==="ArrowUp"&&!e.shiftKey&&!$("#chatInput").value){
-      const m=chat(); for(let i=m.length-1;i>=0;i--){ if(m[i].role==="user"){ e.preventDefault(); $("#chatInput").value=m[i].content; break; } }
+      const m=chat(); for(let i=m.length-1;i>=0;i--){ if(m[i].role==="user"){ e.preventDefault(); $("#chatInput").value=textoDe(m[i]); break; } }
     }
   });
   // atalhos globais
@@ -1454,7 +1524,7 @@
   });
   $("#imgGen").onclick=genImg;
   $("#imgImprove").onclick=()=>improve("#imgPrompt");
-  $("#imgClear").onclick=()=>{ if(confirm("Limpar galeria?")){ state.img=[]; localStorage.setItem(LS.img,"[]"); renderImg(); } };
+  $("#imgClear").onclick=()=>{ if(confirm("Limpar galeria?")){ state.img=[]; persistImg(); renderImg(); } };
   $("#vidImprove").onclick=()=>improve("#vidPrompt");
   $("#vidFromChat").onclick=()=>{ const t=lastChat(); if(t){ $("#vidPrompt").value=t; toast("Prompt do chat aplicado"); } else toast("Conversa vazia",true); };
   $("#cfgSave").onclick=saveCfg;
@@ -1469,13 +1539,30 @@
   $("#cfgFbLoad").onclick=()=>loadModelsFb();
   // arrastar e soltar / colar arquivos no chat
   const chatView=$("#v-chat");
+  const dropMask=$("#dropMask");
+  let dragN=0;
+  function mostraDrop(v){
+    if(!dropMask)return;
+    dropMask.style.display=v?"flex":"none";
+    dropMask.setAttribute("aria-hidden",v?"false":"true");
+  }
   if(chatView){
-    ["dragenter","dragover"].forEach(ev=>chatView.addEventListener(ev,e=>{
+    const temArquivos=e=>Array.from((e.dataTransfer&&e.dataTransfer.types)||[]).includes("Files");
+    chatView.addEventListener("dragenter",e=>{
+      if(state.busy||!temArquivos(e))return;
+      e.preventDefault(); dragN++; mostraDrop(true);
+    });
+    chatView.addEventListener("dragover",e=>{
+      if(state.busy||!temArquivos(e))return;
+      e.preventDefault(); if(e.dataTransfer)e.dataTransfer.dropEffect="copy";
+    });
+    chatView.addEventListener("dragleave",e=>{
       if(state.busy)return;
-      const tipos=Array.from((e.dataTransfer&&e.dataTransfer.types)||[]);
-      if(tipos.includes("Files")){ e.preventDefault(); e.dataTransfer.dropEffect="copy"; }
-    }));
+      dragN=Math.max(0,dragN-1);
+      if(!dragN)mostraDrop(false);
+    });
     chatView.addEventListener("drop",e=>{
+      dragN=0; mostraDrop(false);
       const f=e.dataTransfer&&e.dataTransfer.files;
       if(f&&f.length){ e.preventDefault(); adicionarArquivos(f); }
     });

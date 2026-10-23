@@ -130,6 +130,13 @@ async function run(name, fn) {
   catch (e) { falhas++; console.log("  FALHA " + name + " -> " + e.message); }
 }
 function assert(c, m){ if (!c) throw new Error(m); }
+async function esperar(cond, ms = 1000){
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error("tempo de espera excedido");
+    await new Promise(r => setTimeout(r, 10));
+  }
+}
 
 function prepararConv(nPares, model) {
   t.state.key = "gsk_test";
@@ -586,6 +593,57 @@ function prepararConv(nPares, model) {
     });
   }
 
+  // 28) reenviar sem histórico preserva anexos
+  {
+    const c = prepararConv(0);
+    c.msgs.push({ role: "user", content: "resuma", t: Date.now(),
+      attachments: [{ nome: "nota.txt", tipo: "texto", mime: "text/plain", tamanho: 5, conteudo: "OLÁ!" }] });
+    let corpo = null;
+    fetchImpl = async (url, opts) => { corpo = JSON.parse(opts.body); return okStream("ok"); };
+    await run("reenviarSemHist -> preserva anexos da mensagem", async () => {
+      t.reenviarSemHist();
+      await esperar(() => !t.state.busy);
+      assert(c.msgs[c.msgs.length - 1].content === "ok", "sem resposta");
+      const u = corpo.messages[corpo.messages.length - 1];
+      assert(/OLÁ!/.test(u.content), "anexo não foi enviado: " + u.content);
+    });
+  }
+
+  // 29) trocar de conversa durante a geração é bloqueado
+  {
+    prepararConv(1);
+    const outra = { id: "c-outra", title: "outra", msgs: [], t: Date.now() };
+    t.state.convs.push(outra);
+    await run("troca de conversa -> bloqueada durante a geração", async () => {
+      const antes = t.state.convId;
+      t.state.busy = true;
+      getEl("#convSel").value = outra.id;
+      getEl("#convSel").onchange();
+      assert(t.state.convId === antes, "trocou a conversa durante a geração");
+      t.state.busy = false;
+      t.state.convs = t.state.convs.filter(c => c.id !== outra.id);
+    });
+  }
+
+  // 30) melhorar prompt funciona só com o provedor reserva
+  {
+    prepararConv(0);
+    t.state.key = "";
+    t.state.fb = { prov: "openai", base: "https://reserva/v1", key: "fbk", model: "fb-model" };
+    let usou = null;
+    fetchImpl = async (url, opts) => {
+      usou = url;
+      return { ok: true, status: 200, async json(){ return { choices: [{ message: { content: "melhor" } }] }; } };
+    };
+    getEl("#imgPrompt").value = "gato";
+    await run("improve() -> funciona com provedor reserva sem chave principal", async () => {
+      await t.improve("#imgPrompt");
+      assert(getEl("#imgPrompt").value === "melhor", "valor: " + getEl("#imgPrompt").value);
+      assert(/reserva/.test(usou || ""), "não usou o reserva: " + usou);
+    });
+    t.state.fb = { prov: "", base: "", key: "", model: "" };
+  }
+
   // ---- testes com IndexedDB (rodar com IDB=1) ----
   if (process.env.IDB) {
     // 26) save(): localStorage enxuto, IndexedDB completo
@@ -631,6 +689,35 @@ function prepararConv(nPares, model) {
         t.state.img = [];
         await t.hidratarIDB();
         assert(t.state.img.length === 1 && /^data:image\//.test(t.state.img[0].u), "imagem não restaurada");
+      });
+    }
+
+    // 29) LS mais novo que o IDB (reload antes do debounce) não perde anexos
+    {
+      const base = { id: "cM", title: "m", t: 10, msgs: [{ role: "user", content: "oi",
+        attachments: [{ nome: "a.txt", tipo: "texto", tamanho: 4, conteudo: "FULL" }] }] };
+      const thin = { id: "cM", title: "m", t: 20, msgs: [{ role: "user", content: "oi",
+        attachments: [{ nome: "a.txt", tipo: "texto", tamanho: 4 }] }] };
+      await run("IDB -> LS mais novo não apaga o conteúdo dos anexos", async () => {
+        await t.IDB.set("convs", [base]);
+        localStorage.setItem("st_convs", JSON.stringify([thin]));
+        t.state.convs = [JSON.parse(JSON.stringify(thin))];
+        t.state.convId = "cM";
+        await t.hidratarIDB();
+        assert(t.state.convs[0].msgs[0].attachments[0].conteudo === "FULL", "anexo perdido no merge");
+      });
+    }
+
+    // 30) limpar galeria apaga também do IndexedDB
+    {
+      t.state.img = [{ p: "x", w: 1, h: 1, m: "flux", u: "data:image/jpeg;base64,ABC", t: 2 }];
+      await run("IDB -> limpar galeria apaga também do IndexedDB", async () => {
+        t.persistImg();
+        await new Promise(r => setTimeout(r, 380));
+        getEl("#imgClear").onclick();
+        await new Promise(r => setTimeout(r, 380));
+        const imgs = await t.IDB.get("img");
+        assert(!imgs || imgs.length === 0, "imagens continuaram no IndexedDB");
       });
     }
   }
