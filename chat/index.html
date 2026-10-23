@@ -262,6 +262,13 @@
         <label>Instruções do sistema (personalidade)</label>
         <textarea id="cfgSys"></textarea>
       </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px">
+          <input type="checkbox" id="cfgTituloAuto" style="width:auto;min-width:0">
+          <span>Título automático das conversas</span>
+        </label>
+        <div class="hint">Depois da primeira resposta, pede ao modelo um título curto. Desligue para economizar chamadas.</div>
+      </div>
       <div class="rowflex">
         <button id="cfgSave">Salvar</button>
         <button id="cfgClearKey" class="sec">Apagar chave</button>
@@ -293,7 +300,8 @@
     convs:"st_convs", conv:"st_conv_cur",
     img:"st_img_history", pkey:"st_poll_key",
     base:"st_api_base", prov:"st_api_prov",
-    tema:"st_theme", fb:"st_fb"
+    tema:"st_theme", fb:"st_fb",
+    rascunhos:"st_drafts", tituloAuto:"st_titulo_auto"
   };
   const PRESETS = {
     groq:      { base:"https://api.groq.com/openai/v1",       model:"openai/gpt-oss-120b" },
@@ -368,6 +376,8 @@
     img: Array.isArray(IMG_INI)?IMG_INI:[],
     tema: localStorage.getItem(LS.tema)||"dark",
     fb: Object.assign({prov:"",base:"",key:"",model:""},(FB_INI&&typeof FB_INI==="object")?FB_INI:{}),
+    rascunhos: (function(){ const r=lsJson(LS.rascunhos,{}); return (r&&typeof r==="object"&&!Array.isArray(r))?r:{}; })(),
+    tituloAuto: localStorage.getItem(LS.tituloAuto)!=="0",
     anexos: [],
     abort:null, busy:false, usage:null
   };
@@ -443,6 +453,29 @@
           .filter(x=>x&&x.p&&x.w&&x.h&&(!x.u||/^(data:image\/|https?:)/i.test(x.u)));
         renderImg();
       }
+      // rascunhos: o IDB guarda os anexos completos; o LS pode ter texto mais novo
+      const dr=await IDB.get("rascunhos");
+      if(dr&&typeof dr==="object"&&!Array.isArray(dr)){
+        Object.keys(dr).forEach(k=>{
+          const d=dr[k], l=state.rascunhos[k];
+          if(!d)return;
+          if(l&&(l.t||0)>=(d.t||0)){
+            if(Array.isArray(l.anexos)&&Array.isArray(d.anexos)){
+              l.anexos.forEach(a=>{
+                if(a.conteudo)return;
+                const b=d.anexos.find(x=>x&&x.nome===a.nome);
+                if(b&&b.conteudo)a.conteudo=b.conteudo;
+              });
+            }
+          }else{
+            state.rascunhos[k]=d;
+          }
+        });
+        gravarRascunhos();
+        // completa o rascunho já carregado (o LS tinha só os metadados dos anexos)
+        const c=conv(), r=c&&state.rascunhos[c.id], inp=$("#chatInput");
+        if(r&&inp.value===(r.texto||""))carregarRascunho(c);
+      }
       // recarregou antes do debounce: o localStorage tem a alteração mais recente,
       // mas os anexos completos (conteudo) só existem no IndexedDB
       if(tLS>tIDB){
@@ -485,12 +518,55 @@
       }
     }catch(e){}
   }
-  function save(){
-    const c=conv(); c.t=Date.now();
-    state.convs.sort((a,b)=>b.t-a.t);
+  function persistirConvs(){
     try{ localStorage.setItem(LS.convs,JSON.stringify(IDB.tem?convsMagras():state.convs)); }catch(e){}
     localStorage.setItem(LS.conv,state.convId);
     agendaIDB();
+  }
+  function save(){
+    const c=conv(); c.t=Date.now();
+    state.convs.sort((a,b)=>b.t-a.t);
+    persistirConvs();
+  }
+
+  // --- rascunhos por conversa (texto + anexos) ---
+  let drTimer=null, drIdb=null;
+  function salvarRascunho(imediato){
+    const c=conv(); if(!c)return;
+    const texto=$("#chatInput").value;
+    const anexos=(state.anexos||[]).map(a=>Object.assign({},a));
+    if(texto||anexos.length)state.rascunhos[c.id]={texto,anexos,t:Date.now()};
+    else delete state.rascunhos[c.id];
+    if(imediato){ clearTimeout(drTimer); gravarRascunhos(); return; }
+    clearTimeout(drTimer); drTimer=setTimeout(gravarRascunhos,300);
+  }
+  function gravarRascunhos(){
+    if(IDB.tem){
+      const finos={};
+      Object.keys(state.rascunhos).forEach(k=>{
+        const r=state.rascunhos[k]; if(!r)return;
+        finos[k]={texto:r.texto||"",t:r.t||0};
+        if(Array.isArray(r.anexos)&&r.anexos.length)
+          finos[k].anexos=r.anexos.map(a=>({nome:a.nome,tipo:a.tipo,mime:a.mime,tamanho:a.tamanho}));
+      });
+      try{ localStorage.setItem(LS.rascunhos,JSON.stringify(finos)); }catch(e){}
+      clearTimeout(drIdb);
+      drIdb=setTimeout(()=>{ IDB.set("rascunhos",state.rascunhos).catch(()=>{}); },300);
+      return;
+    }
+    try{ localStorage.setItem(LS.rascunhos,JSON.stringify(state.rascunhos)); }
+    catch(e){
+      // sem IDB e sem quota: mantém ao menos o texto
+      const finos={};
+      Object.keys(state.rascunhos).forEach(k=>{ finos[k]={texto:(state.rascunhos[k]||{}).texto||"",t:(state.rascunhos[k]||{}).t||0}; });
+      try{ localStorage.setItem(LS.rascunhos,JSON.stringify(finos)); }catch(e2){}
+    }
+  }
+  function carregarRascunho(c){
+    const r=c&&state.rascunhos[c.id];
+    $("#chatInput").value=(r&&r.texto)||"";
+    state.anexos=((r&&r.anexos)||[]).map(a=>Object.assign({},a));
+    renderAnexos();
   }
 
   // --- anexos (imagens e arquivos de texto) ---
@@ -547,7 +623,7 @@
         '<button class="rmx" data-rmax="'+i+'" title="Remover anexo">×</button></span>';
     }).join("");
     box.querySelectorAll("[data-rmax]").forEach(b=>b.onclick=()=>{
-      state.anexos.splice(+b.dataset.rmax,1); renderAnexos();
+      state.anexos.splice(+b.dataset.rmax,1); renderAnexos(); salvarRascunho(true);
     });
   }
   function lerTexto(file){
@@ -581,7 +657,7 @@
       }
     }finally{
       state.lendo=Math.max(0,(state.lendo||1)-1);
-      renderAnexos();
+      renderAnexos(); salvarRascunho();
     }
   }
   async function adicionarArquivos(files){
@@ -773,6 +849,7 @@
     const novo=prompt("Novo título da conversa:",atual);
     if(novo===null)return;
     c.title=novo.trim().slice(0,80)||atual||"Nova conversa";
+    c.autoTitulo=false;
     save(); renderChat(); toast("Conversa renomeada");
   }
   function renderChat(){
@@ -842,15 +919,31 @@
     const lastNode=nodes[nodes.length-1];
     if(!lastNode){ renderChat(); return; }
     const m=msgs[msgs.length-1];
+    if(m.role!=="assistant")return;
     const body=lastNode.querySelector(".body");
     let html="";
-    if(m.reasoning&&m.reasoning.trim()){
+    if(typeof m.reasoning==="string"&&m.reasoning.trim()){
       html+='<details class="reason"><summary>pensamento</summary><div>'+md(m.reasoning)+'</div></details>';
     }
     html+=md(textoDe(m));
     body.innerHTML=html;
     addCopyButtons(body);
     const sc=$("#chatScroll"); sc.scrollTop=sc.scrollHeight;
+  }
+  // coalesce o streaming: no máximo ~12 atualizações por segundo
+  let rlUltimo=0, rlTimer=null, rlAlvo=null;
+  function renderLastSuave(c){
+    rlAlvo=c;
+    const espera=80-(Date.now()-rlUltimo);
+    if(espera<=0){ rlUltimo=Date.now(); renderLast(c); return; }
+    if(rlTimer)return;
+    rlTimer=setTimeout(()=>{
+      rlTimer=null; rlUltimo=Date.now();
+      renderLast(rlAlvo);
+    },espera);
+  }
+  function cancelarRenderLast(){
+    clearTimeout(rlTimer); rlTimer=null;
   }
 
   // --- núcleo da API (compartilhado entre chat e "melhorar prompt") ---
@@ -992,6 +1085,36 @@
     return (j.choices?.[0]?.message?.content||"").trim();
   }
 
+  function tituloDe(texto){
+    const t=String(texto||"").replace(/```[\s\S]*?```/g," ").replace(/[#>*_`\[\]]/g," ").replace(/\s+/g," ").trim();
+    return (t||"Nova conversa").slice(0,48);
+  }
+  async function melhorarTitulo(c){
+    if(!state.tituloAuto||!c||!state.convs.includes(c))return;
+    const u=c.msgs.find(m=>m.role==="user");
+    const a=c.msgs.find(m=>m.role==="assistant"&&textoDe(m).trim());
+    if(!u||!a){ c.autoTitulo=false; return; }
+    const cfg=state.key
+      ?{base:state.base,key:state.key,model:state.model,recarregarModelos:loadModels}
+      :{base:state.fb.base,key:state.fb.key,model:state.fb.model};
+    if(!cfg.key||!cfg.base){ c.autoTitulo=false; return; }
+    try{
+      const txt=await chamarChatUma(Object.assign({
+        messages:[
+          {role:"system",content:"Gere um título curto e específico, em português, com no máximo 5 palavras. Responda apenas o título, sem aspas nem pontuação final."},
+          {role:"user",content:"Pergunta: "+textoDe(u).slice(0,500)+"\nResposta: "+textoDe(a).slice(0,500)}
+        ],
+        onStatus:()=>{},
+        getModel:()=>state.key?state.model:state.fb.model
+      },cfg));
+      const titulo=String(txt||"").replace(/[\r\n]+/g," ").replace(/^["'“”]+|["'“”]+$/g,"").replace(/[.!?;:]+$/,"").replace(/\s+/g," ").trim().slice(0,60);
+      if(titulo&&state.convs.includes(c)){
+        c.title=titulo; c.autoTitulo=false;
+        persistirConvs(); renderConvSel();
+      }else c.autoTitulo=false;
+    }catch(e){ c.autoTitulo=false; }
+  }
+
   async function send(forcarSemHist){
     const inp=$("#chatInput"); const text=inp.value.trim();
     const anexos=(state.anexos||[]).slice();
@@ -1000,12 +1123,12 @@
       toast("Configure o provedor e a chave na aba Config",true); switchView("cfg"); return;
     }
     inp.value="";
-    state.anexos=[]; renderAnexos();
+    state.anexos=[]; renderAnexos(); salvarRascunho(true);
     const c=conv();
     const um={role:"user",content:text};
     if(anexos.length)um.attachments=anexos;
     c.msgs.push(um);
-    if(c.title==="Nova conversa"||!c.title) c.title=(text||(anexos[0]&&anexos[0].nome)||"anexo").slice(0,40);
+    if(c.title==="Nova conversa"||!c.title){ c.title=tituloDe(text||(anexos[0]&&anexos[0].nome)||"anexo"); c.autoTitulo=true; }
     const aIdx=c.msgs.push({role:"assistant",content:"",reasoning:""})-1;
     renderChat(); save();
     state.busy=true; state.parar=false;
@@ -1071,7 +1194,7 @@
               if(rsn){ c.msgs[aIdx].reasoning=(c.msgs[aIdx].reasoning||"")+rsn; upd=true; }
               if(delta.content){ c.msgs[aIdx].content+=delta.content; upd=true; }
               if(j.usage)state.usage=j.usage;
-              if(upd) renderLast(c);
+              if(upd) renderLastSuave(c);
             }catch(e){}
           }
         }
@@ -1091,6 +1214,7 @@
         await consumir(r2,ctrl2);
       }
       save(); renderChat(); setStatus([marcaUso(state.usage),marcaContexto()].filter(Boolean).join(" · "));
+      if(c.autoTitulo)melhorarTitulo(c);
     }catch(e){
       marcaFallback(false);
       if(e.name==="TimeoutError"){ toast("Erro: "+e.message,true); }
@@ -1101,6 +1225,7 @@
       // se nada foi gerado (erro/timeout/cancelamento), não deixa resposta vazia no histórico
       const am=c.msgs[aIdx];
       if(am&&am.role==="assistant"&&!am.content&&!am.reasoning){ c.msgs.splice(aIdx,1); save(); }
+      cancelarRenderLast();
       renderChat();
     }
   }
@@ -1346,6 +1471,7 @@
     $("#cfgFbKey").value=state.fb.key||"";
     $("#cfgFbModel").innerHTML=state.fb.model?'<option>'+esc(state.fb.model)+'</option>':'<option value=""></option>';
     $("#cfgSys").value=state.sys;
+    $("#cfgTituloAuto").checked=state.tituloAuto!==false;
   }
   async function loadModelsFb(){
     const k=($("#cfgFbKey").value||"").trim();
@@ -1397,6 +1523,7 @@
     if(mSel) state.model=mSel;
     else{ loadCfg(); toast("Escolha um modelo antes de salvar (botão \"Carregar modelos\")",true); return; }
     state.sys=$("#cfgSys").value.trim()||DEF_SYS;
+    state.tituloAuto=!!$("#cfgTituloAuto").checked;
     state.fb={
       prov:$("#cfgFbProv").value,
       base:$("#cfgFbBase").value.trim().replace(/\/+$/,""),
@@ -1410,6 +1537,7 @@
     localStorage.setItem(LS.pkey,state.pkey);
     localStorage.setItem(LS.model,state.model);
     localStorage.setItem(LS.sys,state.sys);
+    localStorage.setItem(LS.tituloAuto,state.tituloAuto?"1":"0");
     localStorage.setItem(LS.fb,JSON.stringify(state.fb));
     toast("Configurações salvas");
     if(state.key&&$("#cfgModel").options.length<=1) loadModels();
@@ -1417,11 +1545,13 @@
 
   function novaConversa(){
     if(state.busy){ toast("Aguarde a geração terminar",true); return; }
+    salvarRascunho(true);
     const c=state.convs.find(x=>x.id===state.convId);
     if(c&&!c.msgs.length){ renderChat(); return; }
     const n=novoConv();
     state.convs.unshift(n); state.convId=n.id;
     save(); renderChat();
+    carregarRascunho(n);
     $("#chatInput").focus();
   }
 
@@ -1496,16 +1626,20 @@
   $("#convBusca").addEventListener("keydown",e=>{ if(e.key==="Escape"){ e.target.value=""; renderConvSel(); } });
   $("#convSel").onchange=()=>{
     if(state.busy){ renderConvSel(); return; }
-    state.convId=$("#convSel").value; save(); renderChat();
+    salvarRascunho(true);
+    state.convId=$("#convSel").value;
+    carregarRascunho(conv()); save(); renderChat();
   };
   $("#convDel").onclick=()=>{
     if(state.busy){ toast("Aguarde a geração terminar",true); return; }
     if(!confirm("Apagar esta conversa?"))return;
+    delete state.rascunhos[state.convId]; gravarRascunhos();
     state.convs=state.convs.filter(c=>c.id!==state.convId);
     if(!state.convs.length) state.convs=[novoConv()];
     state.convId=state.convs[0].id;
-    save(); renderChat();
+    carregarRascunho(conv()); save(); renderChat();
   };
+  $("#chatInput").addEventListener("input",()=>salvarRascunho());
   $("#chatInput").addEventListener("keydown",e=>{
     if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); return; }
     if(e.key==="ArrowUp"&&!e.shiftKey&&!$("#chatInput").value){
@@ -1581,6 +1715,8 @@
   aplicaTema(state.tema);
   state.img=state.img.filter(x=>x&&x.p&&x.w&&x.h&&(!x.u||/^(data:image\/|https?:)/i.test(x.u)));
   loadCfg(); renderChat(); renderImg(); renderVid(); renderAnexos();
+  carregarRascunho(conv());
+  if(typeof window.addEventListener==="function") window.addEventListener("beforeunload",()=>salvarRascunho(true));
   hidratarIDB();
   (function(){
     const falta=[];
@@ -1593,7 +1729,7 @@
     navigator.serviceWorker.register("sw.js").catch(()=>{});
   }
   // hooks para testes automatizados (não usados em produção)
-  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar,IDB,hidratarIDB,save,persistImg,marcaFallback,resumirHistorico};
+  window.__assistente={send,state,improve,chamarChat,chamarChatUma,loadModels,reenviarSemHist,setTimeoutMs:v=>{LS_TIMEOUT=v;},renomearConversa,editarMensagem,regenerarDe,renderConvSel,conversasFiltradas,renderImg,paraApi,textoDe,conversaMd,adicionarArquivo,adicionarArquivos,aplicaTema,falar,IDB,hidratarIDB,save,persistImg,marcaFallback,resumirHistorico,salvarRascunho,carregarRascunho,gravarRascunhos,melhorarTitulo,renderLastSuave};
 })();
 </script>
 </body>

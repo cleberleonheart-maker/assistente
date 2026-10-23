@@ -1,4 +1,4 @@
-const CACHE = 'assistente-v1';
+const CACHE = 'assistente-v2';
 const CORE = [
   './',
   './index.html',
@@ -11,9 +11,12 @@ const CORE = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting())
-  );
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    // não falha a instalação inteira se um arquivo estiver indisponível
+    await Promise.all(CORE.map((u) => cache.add(u).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
@@ -39,6 +42,21 @@ async function redeDepoisCache(req) {
   }
 }
 
+// vendor/ícones não mudam: responde do cache e atualiza em segundo plano
+async function cacheDepoisRede(req) {
+  const cache = await caches.open(CACHE);
+  const hit = await cache.match(req, MATCH);
+  const rede = fetch(req).then((res) => {
+    if (res && res.ok) cache.put(req, res.clone());
+    return res;
+  });
+  if (hit) {
+    rede.catch(() => {});
+    return hit;
+  }
+  return rede;
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
@@ -47,5 +65,22 @@ self.addEventListener('fetch', (e) => {
   // chamadas de API (provedores de chat/imagem) nunca passam pelo cache
   if (url.origin !== self.location.origin) return;
 
-  e.respondWith(redeDepoisCache(req));
+  if (url.pathname.includes('/vendor/') || url.pathname.includes('/icons/')) {
+    e.respondWith(cacheDepoisRede(req));
+    return;
+  }
+
+  e.respondWith((async () => {
+    try {
+      return await redeDepoisCache(req);
+    } catch (err) {
+      // navegação offline: devolve o app shell mesmo com URL/query diferente
+      if (req.mode === 'navigate' || req.destination === 'document') {
+        const cache = await caches.open(CACHE);
+        const hit = await cache.match('./index.html', MATCH);
+        if (hit) return hit;
+      }
+      throw err;
+    }
+  })());
 });

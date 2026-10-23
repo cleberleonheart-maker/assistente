@@ -143,6 +143,7 @@ function prepararConv(nPares, model) {
   t.state.prov = "groq";
   t.state.base = "https://api.groq.com/openai/v1";
   t.state.model = model || "openai/gpt-oss-120b";
+  t.state.tituloAuto = false;
   const c = t.state.convs[0];
   c.msgs.length = 0;
   for (let i = 0; i < nPares; i++) c.msgs.push({ role: "user", content: "p" + i }, { role: "assistant", content: "r" + i });
@@ -644,6 +645,63 @@ function prepararConv(nPares, model) {
     t.state.fb = { prov: "", base: "", key: "", model: "" };
   }
 
+  // 31) rascunho por conversa
+  {
+    const c1 = prepararConv(0);
+    const c2 = { id: "c2d", title: "outra", msgs: [], t: Date.now() };
+    t.state.convs.push(c2);
+    t.state.convId = c1.id;
+    t.state.rascunhos = {};
+    getEl("#chatInput").value = "rascunho 1";
+    await run("rascunho -> salvo e restaurado ao trocar de conversa", async () => {
+      t.salvarRascunho(true);
+      getEl("#convSel").value = c2.id;
+      getEl("#convSel").onchange();
+      assert(getEl("#chatInput").value === "", "rascunho vazou para outra conversa");
+      assert(t.state.rascunhos[c1.id] && t.state.rascunhos[c1.id].texto === "rascunho 1", "não salvou o rascunho");
+      getEl("#convSel").value = c1.id;
+      getEl("#convSel").onchange();
+      assert(getEl("#chatInput").value === "rascunho 1", "não restaurou o rascunho");
+    });
+    getEl("#chatInput").value = "";
+    t.salvarRascunho(true);
+    t.state.convs = t.state.convs.filter(c => c.id !== "c2d");
+  }
+
+  // 32) enviar limpa o rascunho
+  {
+    const c = prepararConv(0);
+    t.state.anexos = [];
+    getEl("#chatInput").value = "pergunta";
+    t.salvarRascunho(true);
+    fetchImpl = async () => okStream("ok");
+    await run("rascunho -> apagado depois do envio", async () => {
+      await t.send();
+      assert(!t.state.rascunhos[c.id], "rascunho continuou depois do envio");
+    });
+  }
+
+  // 33) título automático (modelo)
+  {
+    const c = prepararConv(0);
+    c.title = "explique fótons";
+    c.autoTitulo = true;
+    c.msgs.push({ role: "user", content: "explique fótons" }, { role: "assistant", content: "Fótons são quanta de luz." });
+    let corpo = null;
+    fetchImpl = async (url, opts) => {
+      corpo = JSON.parse(opts.body);
+      return { ok: true, status: 200, async json(){ return { choices: [{ message: { content: '"Fótons explicados"' } }] }; } };
+    };
+    await run("título automático -> modelo gera e aplica o título", async () => {
+      t.state.tituloAuto = true;
+      await t.melhorarTitulo(c);
+      assert(c.title === "Fótons explicados", "título: " + c.title);
+      assert(c.autoTitulo === false, "não limpou a flag");
+      assert(corpo && corpo.messages.length === 2, "payload inesperado");
+    });
+    t.state.tituloAuto = false;
+  }
+
   // ---- testes com IndexedDB (rodar com IDB=1) ----
   if (process.env.IDB) {
     // 26) save(): localStorage enxuto, IndexedDB completo
@@ -708,7 +766,27 @@ function prepararConv(nPares, model) {
       });
     }
 
-    // 30) limpar galeria apaga também do IndexedDB
+    // 30) rascunho com anexo completo no IndexedDB
+    {
+      t.state.rascunhos = {};
+      getEl("#chatInput").value = "texto do rascunho";
+      t.state.anexos = [{ nome: "i.png", tipo: "imagem", mime: "image/png", conteudo: "data:image/png;base64,AA", tamanho: 10 }];
+      await run("IDB -> rascunho restaura texto e anexo após recarregar", async () => {
+        t.salvarRascunho(true);
+        await new Promise(r => setTimeout(r, 380));
+        // simula o reload: LS já restaurou o texto e os metadados do anexo
+        t.state.rascunhos = {}; t.state.anexos = [{ nome: "i.png", tipo: "imagem", tamanho: 10 }];
+        getEl("#chatInput").value = "texto do rascunho";
+        await t.hidratarIDB();
+        const r = Object.values(t.state.rascunhos)[0];
+        assert(r && r.texto === "texto do rascunho", "texto do rascunho não voltou");
+        assert(r.anexos && r.anexos[0].conteudo === "data:image/png;base64,AA", "anexo do rascunho não voltou");
+        assert(t.state.anexos[0].conteudo === "data:image/png;base64,AA", "anexo não foi completado na caixa");
+      });
+      t.state.rascunhos = {}; t.state.anexos = []; getEl("#chatInput").value = ""; t.gravarRascunhos();
+    }
+
+    // 31) limpar galeria apaga também do IndexedDB
     {
       t.state.img = [{ p: "x", w: 1, h: 1, m: "flux", u: "data:image/jpeg;base64,ABC", t: 2 }];
       await run("IDB -> limpar galeria apaga também do IndexedDB", async () => {

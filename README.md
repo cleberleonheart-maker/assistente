@@ -6,15 +6,18 @@ com geração de imagens via Pollinations e prompts de vídeo.
 
 ## Recursos
 
-- Chat com streaming, raciocínio (quando o modelo expõe), regenerar, editar e reenviar sem histórico.
+- Chat com streaming suavizado, raciocínio (quando o modelo expõe), regenerar, editar e reenviar sem histórico.
 - Anexos por botão, arrastar/soltar ou colar: imagens (redimensionadas) e arquivos de texto.
+- Rascunho por conversa (texto e anexos) preservado ao trocar de conversa ou recarregar.
+- Título automático gerado pelo modelo após a primeira resposta (pode ser desligado em Config).
 - Histórico e galeria de imagens completos no IndexedDB; o `localStorage` guarda uma versão enxuta.
 - Provedor reserva (fallback) para rede, timeout, 429 e 5xx, inclusive no meio do stream.
 - Voz: ditado em pt-BR (`ditar`) e leitura das respostas (`ouvir`).
 - Tema claro/escuro persistente.
 - Exportar/copiar a conversa em Markdown; exportar/importar conversas em JSON.
 - Resumo manual do histórico para reduzir o contexto enviado.
-- PWA instalável com service worker (network-first para arquivos locais).
+- PWA instalável e funcional offline: service worker com cache-first para `vendor/` e
+  network-first com fallback para o app shell nas demais rotas.
 
 ## Requisitos
 
@@ -51,6 +54,7 @@ Na aba **Config**:
 2. Clique em **Carregar modelos**, escolha o modelo e **Salvar**.
 3. Opcional: configure o **provedor reserva** (provedor, base, chave, carregar modelos).
 4. Opcional: informe a chave do Pollinations para gerar imagens sem o limite grátis.
+5. Opcional: desmarque **Título automático** para evitar a chamada extra que nomeia a conversa.
 
 As chaves ficam somente no navegador (`localStorage`) e são enviadas apenas ao provedor
 correspondente. Não use em máquina compartilhada.
@@ -70,8 +74,8 @@ Modelos de imagem: para enviar imagens no chat, o modelo precisa ser multimodal
 Sem navegador nem rede (DOM mínimo em Node):
 
 ```bash
-node chat/test/harness.js          # 32 testes
-IDB=1 node chat/test/harness.js    # inclui 5 testes do IndexedDB (37)
+node chat/test/harness.js          # 35 testes
+IDB=1 node chat/test/harness.js    # inclui 6 testes do IndexedDB (41)
 ```
 
 ## Estrutura
